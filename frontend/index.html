@@ -594,7 +594,7 @@ const app = createApp({
           tooltip: { formatter: p => '等待时间:' + p.data[0].toFixed(2) + 'min<br>碳排放:' + p.data[1].toFixed(1) + 'kg' },
           grid: { left: 60, right: 30, top: 20, bottom: 60 },
           xAxis: { type: 'value', name: '平均等待时间(min)', min: 0, max: 12 },
-          yAxis: { type: 'value', name: '碳排放(kg CO₂)' },
+          yAxis: { type: 'value', name: '碳排放(kg CO₂)', max: 1500 },
           visualMap: {
             dimension: 1, min: 600, max: 1500,
             inRange: { color: ['#67c23a', '#e6a23c', '#f56c6c'] },
@@ -637,7 +637,7 @@ const app = createApp({
           tooltip: { trigger: 'axis' },
           grid: { left: 50, right: 20, top: 10, bottom: 50 },
           xAxis: { type: 'category', data: hrs, axisLabel: { interval: 3, rotate: 30 } },
-          yAxis: { type: 'value', name: '发车间隔(min)', inverse: true },
+          yAxis: { type: 'value', name: '发车间隔(min)', inverse: true, min: 0, max: 30 },
           series: [{
             type: 'bar', barWidth: '70%',
             data: sch.map(v => ({
@@ -1089,7 +1089,7 @@ const app = createApp({
         tooltip: { formatter: p => '等待时间:' + p.data[0] + 'min<br>碳排放:' + p.data[1] + 'kg' },
         grid: { left: 60, right: 30, top: 20, bottom: 60 },
         xAxis: { type: 'value', name: '平均等待时间(min)', min: 0, max: 12 },
-        yAxis: { type: 'value', name: '碳排放(kg CO₂)' },
+        yAxis: { type: 'value', name: '碳排放(kg CO₂)', max: 1500 },
         visualMap: {
           dimension: 1, min: 700, max: 1500,
           inRange: { color: ['#67c23a', '#e6a23c', '#f56c6c'] },

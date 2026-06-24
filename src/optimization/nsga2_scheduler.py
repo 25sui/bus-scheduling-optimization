@@ -75,11 +75,29 @@ class NSGA2Scheduler:
         # 种群
         self.toolbox.register("population", tools.initRepeat, list, self.toolbox.individual)
 
-        # 遗传算子
-        self.toolbox.register("mate", tools.cxBlend, alpha=0.5)
-        self.toolbox.register("mutate", self._mutate_headway, indpb=0.2)
+        # 遗传算子（SBX有界交叉 + 多项式变异，避免越界）
+        eta = 20.0
+        min_h = self.cfg["min_headway"]
+        max_h = self.cfg["max_headway_offpeak"]
+        self.toolbox.register("mate", tools.cxSimulatedBinaryB, eta=eta)
+        self.toolbox.register("mutate", tools.mutPolynomialB, eta=eta, indpb=0.2)
         self.toolbox.register("select", tools.selNSGA2)
         self.toolbox.register("evaluate", self._evaluate_individual)
+
+        # 边界修复装饰器：确保基因值在 [min_headway, max_headway_offpeak] 内且为整数
+        def _make_boundary_repair(min_val, max_val):
+            def _repair_decorator(func):
+                def _wrapper(*args, **kwargs):
+                    offspring = func(*args, **kwargs)
+                    for ind in offspring:
+                        for i in range(len(ind)):
+                            ind[i] = int(np.clip(round(ind[i], 0), min_val, max_val))
+                    return offspring
+                return _wrapper
+            return _repair_decorator
+
+        self.toolbox.decorate("mate", _make_boundary_repair(min_h, max_h))
+        self.toolbox.decorate("mutate", _make_boundary_repair(min_h, max_h))
 
     # ── 遗传算子细节 ─────────────────────────────────────────────────────
 
@@ -146,7 +164,13 @@ class NSGA2Scheduler:
         返回 (waiting_time, carbon_emission, operating_cost)，
         均为最小化目标。
         """
-        schedule = np.array(individual)
+        # 防御性处理：裁剪到合法范围并取整
+        min_h = self.cfg["min_headway"]
+        max_h = self.cfg["max_headway_offpeak"]
+        schedule = np.array([
+            int(np.clip(round(float(g), 0), min_h, max_h))
+            for g in individual
+        ], dtype=int)
 
         # 目标1：乘客平均等待时间
         avg_wait = self._calc_avg_waiting_time(schedule)
@@ -242,21 +266,28 @@ class NSGA2Scheduler:
         # 整理 Pareto 前沿解
         pareto_solutions = []
         for ind in hof.items:
+            # 防御性处理：裁剪基因值到合法范围并取整（与 _evaluate_individual 一致）
+            min_h = self.cfg["min_headway"]
+            max_h = self.cfg["max_headway_offpeak"]
+            clipped_schedule = [
+                int(np.clip(round(float(g), 0), min_h, max_h))
+                for g in ind
+            ]
             pareto_solutions.append({
-                "schedule": list(ind),
+                "schedule": clipped_schedule,
                 "waiting_time": round(ind.fitness.values[0], 3),
                 "carbon_emission": round(ind.fitness.values[1], 2),
                 "operating_cost": round(ind.fitness.values[2], 2),
             })
-
-        # 选择推荐方案
-        recommended = self._select_recommended(pareto_solutions)
 
         # 计算基线方案（固定 10 分钟间隔，作为改善率基准）
         baseline_schedule = [10] * self.num_time_slots
         baseline_metrics = self._evaluate_individual(baseline_schedule)
         baseline_wait = baseline_metrics[0]
         baseline_carbon = baseline_metrics[1]
+
+        # 选择推荐方案（传入动态基线）
+        recommended = self._select_recommended(pareto_solutions, baseline_wait, baseline_carbon)
 
         # 为推荐方案计算改善率字段
         if recommended:
@@ -296,29 +327,55 @@ class NSGA2Scheduler:
 
     # ── 推荐方案选择 ─────────────────────────────────────────────
 
-    def _select_recommended(self, solutions: list) -> dict:
+    def _select_recommended(self, solutions: list, 
+                                 baseline_wait: float = None, 
+                                 baseline_carbon: float = None) -> dict:
         """
         从 Pareto 前沿中选择推荐方案。
-        策略：优先选择等待时间 ≤ 基线值的解；
-        若有多个，选其中碳排放最低的解。
-        若 Pareto 前沿中没有满足等待时间约束的解，则选择等待时间最小的解。
+        策略：
+        1. 优先选择等待时间 ≤ 基线值 且 碳排放 ≤ 基线值 的解（硬约束）；
+        2. 若有多个，选其中等待时间最短的解（兼顾乘客体验）；
+        3. 若没有同时满足的，则选择综合得分最高的解：
+           综合得分 = 等待时间改善率 × 0.5 + 碳排放改善率 × 0.5
         """
         if not solutions:
             return {}
 
-        baseline_wait = 7.0   # 基线等待时间（固定10分钟间隔约为 5-7 min）
-        baseline_carbon = 1152.0  # 基线碳排放
+        # 使用动态基线（若调用方未传，则使用经验值）
+        if baseline_wait is None:
+            baseline_wait = 7.0
+        if baseline_carbon is None:
+            baseline_carbon = 1152.0  # 与 run() 中的 baseline 一致
 
-        # 第一优先级：等待时间 ≤ 基线值的解
-        feasible = [s for s in solutions if s["waiting_time"] <= baseline_wait + 0.5]
+        # 第一优先级：等待时间 ≤ 基线值 且 碳排放 ≤ 基线值（硬约束，无容忍）
+        feasible = [s for s in solutions
+                        if s["waiting_time"] <= baseline_wait
+                        and s["carbon_emission"] <= baseline_carbon]
 
-        target = feasible if feasible else solutions
+        if feasible:
+            # 在可行解中选择等待时间最短的解（兼顾乘客体验）
+            best = min(feasible, key=lambda s: s["waiting_time"])
+            rec = best.copy()
+            rec["selection_method"] = "feasible_both"
+            return rec
 
-        # 在可行解中选择碳排放最低的解
-        best = min(target, key=lambda s: s["carbon_emission"])
+        # 第二优先级：没有同时满足的，选择综合得分最高的解
+        best = None
+        best_score = float('-inf')
+        
+        for s in solutions:
+            wait_red = (baseline_wait - s["waiting_time"]) / max(baseline_wait, 1e-6)
+            carbon_red = (baseline_carbon - s["carbon_emission"]) / max(baseline_carbon, 1e-6)
+            # 加权得分：等待时间改善占50%，碳排放改善占50%
+            score = wait_red * 0.5 + carbon_red * 0.5
+            
+            if score > best_score:
+                best_score = score
+                best = s
 
         rec = best.copy()
-        rec["selection_method"] = "feasible_first" if feasible else "pareto_min_carbon"
+        rec["selection_method"] = "weighted_score"
+        rec["weighted_score"] = round(best_score, 4)
         return rec
 
     # ── 优化结果持久化 ─────────────────────────────────────────

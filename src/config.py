@@ -37,8 +37,8 @@ OPTIMIZATION_CONFIG = {
     "crossover_prob": 0.85,    # 与 mutation_prob 之和必须 ≤1.0（DEAP 要求）
     "mutation_prob": 0.15,       # 0.85 + 0.15 = 1.0，满足 DEAP 约束
     "min_headway": 3,        # 最小发车间隔（分钟）
-    "max_headway_peak": 15,  # 高峰最大发车间隔（分钟）
-    "max_headway_offpeak": 30,  # 平峰最大发车间隔（分钟）
+    "max_headway_peak": 12,  # 高峰最大发车间隔（分钟）— 从15降到12
+    "max_headway_offpeak": 20,  # 平峰最大发车间隔（分钟）— 从30降到20
     "fleet_size": 200,       # 可用车辆数（每日最大发车趟数能力）
     "driver_max_hours": 8,   # 驾驶员单班最大时长
     "cost_per_km": 8.5,       # 每公里运营成本（元，含燃料/电耗+折旧）
