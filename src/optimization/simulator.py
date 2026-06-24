@@ -135,6 +135,7 @@ class BusOperationSimulator:
             "carbon_per_passenger": round(
                 carbon_result["total_emission_kg"] / max(total_boarded, 1), 4
             ),
+            "avg_wait_time_per_slot": [round(s["avg_wait"], 2) for s in slot_details],
             "slot_details": slot_details,
         }
 
@@ -154,6 +155,22 @@ class BusOperationSimulator:
         print("[仿真] 运行优化方案...")
         optimized_result = self.simulate_schedule(optimized, name="智能优化")
 
+        # 计算各时段满载率（6个时段：5-8,8-11,11-13,13-16,16-19,19-21）
+        def _period_load_rate(details):
+            ranges = [(0,6), (6,12), (12,16), (16,22), (22,28), (28,32)]
+            result = []
+            for start, end in ranges:
+                period = details[start:end]
+                if period:
+                    avg = sum(s["load_ratio"] for s in period) / len(period)
+                    result.append(round(avg, 3))
+                else:
+                    result.append(0.0)
+            return result
+
+        baseline_result["load_rate_per_period"] = _period_load_rate(baseline_result["slot_details"])
+        optimized_result["load_rate_per_period"] = _period_load_rate(optimized_result["slot_details"])
+
         # 计算改进量
         wait_reduction = (
             (baseline_result["avg_waiting_time"] - optimized_result["avg_waiting_time"])
@@ -166,6 +183,15 @@ class BusOperationSimulator:
         trips_saved = baseline_result["total_trips"] - optimized_result["total_trips"]
 
         comparison = {
+            "summary": {
+                "wait_improve": round((wait_reduction / 100.0), 4),  # 前端以小数显示百分比
+                "carbon_reduce": round((carbon_reduction / 100.0), 4),
+                "trips_reduced": int(trips_saved),
+                "load_improve": round(
+                    (optimized_result["avg_load_ratio"] - baseline_result["avg_load_ratio"]) /
+                    max(baseline_result["avg_load_ratio"], 0.01), 4
+                ),
+            },
             "baseline": baseline_result,
             "optimized": optimized_result,
             "improvements": {

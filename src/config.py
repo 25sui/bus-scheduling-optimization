@@ -39,7 +39,7 @@ OPTIMIZATION_CONFIG = {
     "min_headway": 3,        # 最小发车间隔（分钟）
     "max_headway_peak": 15,  # 高峰最大发车间隔（分钟）
     "max_headway_offpeak": 30,  # 平峰最大发车间隔（分钟）
-    "fleet_size": 20,        # 可用车辆数（真实约束）
+    "fleet_size": 200,       # 可用车辆数（每日最大发车趟数能力）
     "driver_max_hours": 8,   # 驾驶员单班最大时长
     "cost_per_km": 8.5,       # 每公里运营成本（元，含燃料/电耗+折旧）
     "driver_wage_per_hour": 45.0,  # 驾驶员时薪（元）

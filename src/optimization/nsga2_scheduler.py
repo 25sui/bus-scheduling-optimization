@@ -159,10 +159,8 @@ class NSGA2Scheduler:
         # 目标3：总运营成本
         operating_cost = self._calc_operating_cost(schedule)
 
-        # 约束惩罚（加入所有目标）
+        # 约束惩罚（仅加在运营成本上，不影响等待时间和碳排放目标）
         penalty = self._vehicle_penalty(schedule)
-        avg_wait += penalty * 0.01   # 等待时间也受惩罚（轻微）
-        total_carbon += penalty * 0.005
         operating_cost += penalty
 
         return (avg_wait, total_carbon, operating_cost)
@@ -253,9 +251,23 @@ class NSGA2Scheduler:
         # TOPSIS 选择推荐方案（三目标归一化距离）
         recommended = self._select_recommended(pareto_solutions)
 
+        # 计算基线方案（固定 10 分钟间隔，作为改善率基准）
+        baseline_schedule = [10] * self.num_time_slots
+        baseline_metrics = self._evaluate_individual(baseline_schedule)
+        baseline_wait = baseline_metrics[0]
+        baseline_carbon = baseline_metrics[1]
+
+        # 为推荐方案计算改善率字段
+        if recommended:
+            rec_wait = recommended["waiting_time"]
+            rec_carbon = recommended["carbon_emission"]
+            recommended["wait_reduction"] = round((baseline_wait - rec_wait) / baseline_wait, 4)
+            recommended["carbon_reduction"] = round((baseline_carbon - rec_carbon) / baseline_carbon, 4)
+
         result = {
             "pareto_front": pareto_solutions,
             "recommended": recommended,
+            "baseline": {"waiting_time": round(baseline_wait, 3), "carbon_emission": round(baseline_carbon, 2)},
             "num_pareto": len(pareto_solutions),
             "config": {
                 "pop_size": self.cfg["population_size"],
