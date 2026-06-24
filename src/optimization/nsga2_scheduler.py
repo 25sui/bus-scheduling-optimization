@@ -79,8 +79,10 @@ class NSGA2Scheduler:
         eta = 20.0
         min_h = self.cfg["min_headway"]
         max_h = self.cfg["max_headway_offpeak"]
-        self.toolbox.register("mate", tools.cxSimulatedBinaryB, eta=eta)
-        self.toolbox.register("mutate", tools.mutPolynomialB, eta=eta, indpb=0.2)
+        # cxSimulatedBinaryB 不存在，改用 cxSimulatedBinary（DEAP 1.x 正确名称）
+        self.toolbox.register("mate", tools.cxSimulatedBinary, eta=eta)
+        # mutPolynomialB 不存在，改用 mutPolynomialBounded（DEAP 1.x 正确名称）
+        self.toolbox.register("mutate", tools.mutPolynomialBounded, eta=eta, indpb=0.2)
         self.toolbox.register("select", tools.selNSGA2)
         self.toolbox.register("evaluate", self._evaluate_individual)
 
