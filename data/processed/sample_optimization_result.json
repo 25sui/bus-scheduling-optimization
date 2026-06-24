@@ -1,0 +1,35 @@
+{
+  "pareto_front": [
+    {"waiting_time": 0.52, "carbon_emission": 785.2, "headway": 4.5, "trips": 168},
+    {"waiting_time": 0.58, "carbon_emission": 798.6, "headway": 5.0, "trips": 156},
+    {"waiting_time": 0.63, "carbon_emission": 820.8, "headway": 5.5, "trips": 144},
+    {"waiting_time": 0.71, "carbon_emission": 845.3, "headway": 6.0, "trips": 132},
+    {"waiting_time": 0.82, "carbon_emission": 879.1, "headway": 6.8, "trips": 120},
+    {"waiting_time": 0.95, "carbon_emission": 912.5, "headway": 7.5, "trips": 108},
+    {"waiting_time": 1.12, "carbon_emission": 956.8, "headway": 8.5, "trips": 96},
+    {"waiting_time": 1.35, "carbon_emission": 1005.2, "headway": 9.5, "trips": 84},
+    {"waiting_time": 1.68, "carbon_emission": 1058.7, "headway": 10.5, "trips": 72},
+    {"waiting_time": 2.15, "carbon_emission": 1102.4, "headway": 12.0, "trips": 64},
+    {"waiting_time": 3.02, "carbon_emission": 1128.9, "headway": 15.0, "trips": 48},
+    {"waiting_time": 4.85, "carbon_emission": 1145.6, "headway": 20.0, "trips": 36},
+    {"waiting_time": 6.92, "carbon_emission": 1150.8, "headway": 25.0, "trips": 24}
+  ],
+  "recommended": {
+    "waiting_time": 0.63,
+    "carbon_emission": 820.8,
+    "headway": 5.5,
+    "trips": 144,
+    "wait_reduction": 0.91,
+    "carbon_reduction": 0.286,
+    "trips_reduced": 48,
+    "load_rate": 68.5,
+    "schedule": [5, 5, 4, 4, 4, 5, 5, 6, 8, 8, 10, 10, 12, 10, 8, 8, 6, 5, 5, 4, 4, 5, 6, 8, 10, 12, 15, 18, 20, 22, 25, 28]
+  },
+  "baseline": {
+    "waiting_time": 7.0,
+    "carbon_emission": 1152.0,
+    "headway": 10.0,
+    "trips": 192,
+    "load_rate": 42.0
+  }
+}

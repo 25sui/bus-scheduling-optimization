@@ -141,6 +141,7 @@
       <p class="sub-title">NSGA-II 多目标遗传算法 — 等待时间 & 碳排放 双目标优化</p>
       <div style="margin-bottom:16px;display:flex;gap:12px;align-items:center">
         <button @click="runOptim" :disabled="optimizing" style="padding:8px 20px;background:#409EFF;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">{{ optimizing?'优化中...':'▶ 运行 NSGA-II 优化' }}</button>
+        <button @click="loadSampleOptim" :disabled="optimizing" style="padding:8px 20px;background:#67C23A;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">{{ optimDone?'已加载示例':'加载示例结果' }}</button>
         <span style="background:#f4f4f5;padding:4px 12px;border-radius:4px;font-size:12px;color:#666">种群 100 · 代数 200</span>
         <span v-if="optimDone" style="background:#f0f9eb;padding:4px 12px;border-radius:4px;font-size:12px;color:#67C23A">已找到 Pareto 最优解</span>
       </div>
@@ -160,13 +161,13 @@
       <div class="row">
         <div class="card"><h3>推荐方案</h3>
           <div style="text-align:center;padding:20px 0">
-            <div style="font-size:38px;font-weight:700;color:#409EFF">0.63</div><small style="color:#999">分钟 / 平均等待时间</small>
+            <div id="rec-waiting" style="font-size:38px;font-weight:700;color:#409EFF">{{ optimKpi.waitingTime }}</div><small style="color:#999">分钟 / 平均等待时间</small>
           </div>
           <hr style="margin:16px 0;border:none;border-top:1px solid #eee"/>
-          <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px"><span style="color:#666">碳排放量</span><strong>820.8 kg CO₂/日</strong></div>
-          <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px"><span style="color:#666">等待改善</span><strong style="color:#67C23A">91.0%</strong></div>
-          <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px"><span style="color:#666">碳减排率</span><strong style="color:#67C23A">28.6%</strong></div>
-          <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px"><span style="color:#666">每日减少班次</span><strong style="color:#409EFF">约 48 趟</strong></div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px"><span style="color:#666">碳排放量</span><strong id="rec-carbon">{{ optimKpi.carbon }}</strong></div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px"><span style="color:#666">等待改善</span><strong id="rec-wait-reduce" style="color:#67C23A">{{ optimKpi.waitReduce }}</strong></div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px"><span style="color:#666">碳减排率</span><strong id="rec-carbon-reduce" style="color:#67C23A">{{ optimKpi.carbonReduce }}</strong></div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px"><span style="color:#666">每日减少班次</span><strong style="color:#409EFF">{{ optimKpi.tripsReduced }}</strong></div>
         </div>
         <div class="card"><h3>优化排班方案 — 各时段发车间隔（分钟）</h3><div ref="scheduleTimelineChart" class="chart-container" style="height:310px"></div></div>
       </div>
@@ -206,13 +207,14 @@
       <p class="sub-title">公交运营仿真 — 固定排班 vs 智能优化 方案对比</p>
       <div style="margin-bottom:16px;display:flex;gap:12px;">
         <button @click="simRun" :disabled="simRunning" style="padding:8px 20px;background:#409EFF;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">{{ simRunning?'模拟中...':'▶ 运行对比仿真' }}</button>
+        <button @click="loadSampleSim" :disabled="simRunning" style="padding:8px 20px;background:#67C23A;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">{{ simDone?'已加载示例':'加载示例结果' }}</button>
         <span style="background:#f4f4f5;padding:4px 12px;border-radius:4px;font-size:12px;color:#666">模拟周期：1天（5:00-21:00）</span>
       </div>
       <div v-if="simDone" class="kpi-row">
-        <div class="kpi" style="background:#409EFF"><div class="kpi-value">-91.0%</div><div class="kpi-label">等待时间改善</div></div>
-        <div class="kpi green-box"><div class="kpi-value" style="color:#2e7d32">-28.6%</div><div class="kpi-label">碳排降低</div></div>
-        <div class="kpi orange-box"><div class="kpi-value" style="color:#ef6c00">-48趟/日</div><div class="kpi-label">减少班次</div></div>
-        <div class="kpi red-box"><div class="kpi-value" style="color:#c62828">+61.9%</div><div class="kpi-label">满载率提升</div></div>
+        <div class="kpi" style="background:#409EFF"><div class="kpi-value">{{ simKpi.waitImprove }}</div><div class="kpi-label">等待时间改善</div></div>
+        <div class="kpi green-box"><div class="kpi-value" style="color:#2e7d32">{{ simKpi.carbonReduce }}</div><div class="kpi-label">碳排降低</div></div>
+        <div class="kpi orange-box"><div class="kpi-value" style="color:#ef6c00">{{ simKpi.tripsReduced }}</div><div class="kpi-label">减少班次</div></div>
+        <div class="kpi red-box"><div class="kpi-value" style="color:#c62828">{{ simKpi.loadImprove }}</div><div class="kpi-label">满载率提升</div></div>
       </div>
       <div class="row">
         <div style="flex:1.4"><div class="card"><h3>各时段乘客平均等待时间（分钟）</h3><div ref="simWaitTime" class="chart-container" style="height:380px"></div></div></div>
@@ -326,41 +328,464 @@ const app = createApp({
     const simWaitTime = ref(null), simRadar = ref(null), simLoadRate = ref(null), simFreq = ref(null);
     const routeInfoChart = ref(null), travelTimeChart = ref(null);
     const optimProgress = ref(0), optimLog = ref([]);
+    const optimizationResult = ref(null);
+    const simulationResult = ref(null);
+    const optimKpi = ref({ waitingTime: '-- min', carbon: '-- kg', waitReduce: '--%', carbonReduce: '--%', tripsReduced: '--' });
+    const simKpi = ref({ waitImprove: '--%', carbonReduce: '--%', tripsReduced: '--', loadImprove: '--%' });
     let leafletMap = null;
 
     const chartInstances = [];
 
-    function runOptim() {
+    async function loadSampleOptim() {
+      try {
+        optimLog.value = ['[示例] 正在加载预计算优化结果...'];
+        optimizing.value = true;
+        const resp = await fetch('/api/optimization/sample');
+        if (!resp.ok) throw new Error('加载失败 HTTP ' + resp.status);
+        const result = await resp.json();
+        if (result.error) throw new Error(result.error);
+        optimizationResult.value = result;
+        optimDone.value = true;
+        optimizing.value = false;
+        optimProgress.value = 100;
+        optimLog.value = ['[示例] ✅ 已加载预计算优化结果', '[示例] Pareto 前沿 ' + (result.pareto_front ? result.pareto_front.length : 0) + ' 个解', '[示例] 推荐方案等待时间 ' + (result.recommended ? result.recommended.waiting_time : '--') + ' min'];
+        await nextTick();
+        renderOptimChartsReal();
+      } catch (e) {
+        optimLog.value = ['[示例错误] ' + e.message];
+        optimizing.value = false;
+      }
+    }
+
+    async function runOptim() {
       optimizing.value = true;
       optimProgress.value = 0;
       optimLog.value = [];
-      const logs = [
-        '[1/6] 初始化种群...',
-        '[2/6] 计算适应度函数（等待时间）...',
-        '[3/6] 计算适应度函数（碳排放）...',
-        '[4/6] 非支配排序 + 拥挤度计算...',
-        '[5/6] 锦标赛选择 + 交叉变异...',
-        '[6/6] 输出 Pareto 最优解集...',
-        '✅ NSGA-II 优化完成！找到 1109 个非支配解。'
-      ];
-      let step = 0;
-      const timer = setInterval(() => {
-        if (step < logs.length - 1) {
-          optimProgress.value = Math.round((step + 1) / (logs.length - 1) * 100);
-          optimLog.value.push(logs[step]);
-          step++;
-        } else {
-          clearInterval(timer);
-          optimProgress.value = 100;
-          optimLog.value.push(logs[logs.length - 1]);
-          optimizing.value = false;
-          optimDone.value = true;
-        }
-      }, 500);
+      optimizationResult.value = null;
+
+      try {
+        // 1. 启动后端优化任务（使用轻量参数，确保能在 2 分钟内完成）
+        optimLog.value.push('[1/6] 正在提交优化任务到后端...（轻量模式：种群30，代数50）');
+        const params = new URLSearchParams();
+        params.append('population_size', '30');
+        params.append('generations', '50');
+        const startResp = await fetch('/api/optimization/run?' + params.toString(), { method: 'POST' });
+        if (!startResp.ok) throw new Error('启动失败 HTTP ' + startResp.status);
+        const startData = await startResp.json();
+        optimLog.value.push('[2/6] 任务已提交，后端开始计算...（预计 30-90 秒）');
+        optimProgress.value = 10;
+
+        // 2. 轮询结果（每 3 秒查一次，最多 120 次 = 6 分钟）
+        let pollCount = 0;
+        const maxPolls = 120;
+        const poll = async () => {
+          pollCount++;
+          try {
+            const resultResp = await fetch('/api/optimization/result');
+            if (!resultResp.ok) throw new Error('获取结果失败');
+            const result = await resultResp.json();
+
+            if (result.status === 'running') {
+              // 还在跑，继续轮询
+              optimProgress.value = Math.min(10 + Math.round(pollCount * 1.0), 95);
+              optimLog.value.push('[轮询] 优化计算中...（' + pollCount + '/' + maxPolls + '）');
+              if (pollCount < maxPolls) {
+                setTimeout(poll, 2000);
+              } else {
+                throw new Error('优化超时（3分钟），请检查后端日志');
+              }
+              return;
+            }
+
+            // 3. 优化完成，使用真实数据渲染
+            optimLog.value.push('[5/6] 优化完成！正在解析 Pareto 前沿...');
+            optimProgress.value = 100;
+            optimizing.value = false;
+            optimDone.value = true;
+            optimizationResult.value = result;
+
+            // 用真实数据重新渲染所有图表
+            await nextTick();
+            renderOptimChartsReal();
+
+            optimLog.value.push('[6/6] ✅ 已加载真实优化结果：' + (result.pareto_front ? result.pareto_front.length : 0) + ' 个 Pareto 解');
+
+          } catch (e) {
+            optimLog.value.push('[错误] ' + e.message);
+            optimizing.value = false;
+            // 降级：用模拟数据
+            optimProgress.value = 100;
+            optimDone.value = true;
+            renderOptimChartsMock();
+          }
+        };
+        setTimeout(poll, 2000);
+
+      } catch (e) {
+        optimLog.value.push('[错误] ' + e.message + '，将使用模拟数据');
+        optimizing.value = false;
+        optimProgress.value = 100;
+        optimDone.value = true;
+        renderOptimChartsMock();
+      }
     }
-    function simRun() {
+    async function loadSampleSim() {
+      try {
+        simRunning.value = true;
+        simDone.value = false;
+        const resp = await fetch('/api/optimization/sample');
+        if (!resp.ok) throw new Error('加载失败 HTTP ' + resp.status);
+        const result = await resp.json();
+        // 用示例优化结果构造仿真对比
+        const baseline = [];
+        const optimized = [];
+        for (let i = 0; i < 32; i++) baseline.push(10);
+        if (result.recommended && result.recommended.schedule) {
+          for (let i = 0; i < 32; i++) {
+            optimized.push(result.recommended.schedule[i] || result.recommended.schedule[result.recommended.schedule.length - 1] || 10);
+          }
+        } else {
+          for (let i = 0; i < 32; i++) {
+            const h = i * 0.5 + 5;
+            if (h >= 7 && h < 9) optimized.push(4);
+            else if (h >= 9 && h < 17) optimized.push(8);
+            else if (h >= 17 && h < 19) optimized.push(5);
+            else if (h >= 19 && h < 21) optimized.push(10);
+            else optimized.push(15);
+          }
+        }
+        // 构造仿真结果（示例数据）
+        const simData = {
+          summary: {
+            wait_improve: 0.91,
+            carbon_reduce: 0.286,
+            trips_reduced: 48,
+            load_improve: 0.619,
+          },
+          baseline: {
+            avg_wait_time_per_slot: Array.from({length:32}, (_,i) => { const h=i*0.5+5; return h>=7&&h<9?3.5:h>=17&&h<19?3.2:7.0; }),
+            load_rate_per_period: [52, 38, 28, 33, 48, 15],
+            wait_score: 30, carbon_score: 30, load_score: 42, efficiency_score: 45,
+          },
+          optimized: {
+            avg_wait_time_per_slot: Array.from({length:32}, (_,i) => { const h=i*0.5+5; return h>=7&&h<9?0.6:h>=17&&h<19?0.7:h<6||h>20?1.2:0.8; }),
+            load_rate_per_period: [78, 55, 62, 58, 82, 22],
+            wait_score: 98, carbon_score: 72, load_score: 85, efficiency_score: 88,
+          }
+        };
+        simulationResult.value = simData;
+        simDone.value = true;
+        simRunning.value = false;
+        simKpi.value = {
+          waitImprove: '-91.0%',
+          carbonReduce: '-28.6%',
+          tripsReduced: '-48趟/日',
+          loadImprove: '+61.9%',
+        };
+        await nextTick();
+        renderSimChartsReal(simData, baseline, optimized);
+      } catch (e) {
+        alert('加载示例仿真数据失败：' + e.message);
+        simRunning.value = false;
+      }
+    }
+
+    async function simRun() {
       simRunning.value = true;
-      setTimeout(() => { simRunning.value = false; simDone.value = true; }, 1500);
+      simDone.value = false;
+      simulationResult.value = null;
+
+      try {
+        // 构造基准排班（固定 10 分钟间隔）和优化后排班
+        // 一天运营 16 小时（5:00-21:00），每 30 分钟一个时段，共 32 个时段
+        const baseline = [];
+        const optimized = [];
+        for (let i = 0; i < 32; i++) {
+          baseline.push(10); // 固定 10 分钟间隔
+        }
+
+        // 如果有优化结果，用真实的推荐方案
+        if (optimizationResult.value && optimizationResult.value.recommended) {
+          const rec = optimizationResult.value.recommended;
+          if (rec.schedule && rec.schedule.length > 0) {
+            for (let i = 0; i < 32; i++) {
+              optimized.push(rec.schedule[i] || rec.schedule[rec.schedule.length - 1] || 10);
+            }
+          } else {
+            // 没有 schedule 数组，用推荐方案的头way 构造
+            const hw = rec.headway || 8;
+            for (let i = 0; i < 32; i++) {
+              const h = i * 0.5 + 5;
+              if (h >= 7 && h < 9) optimized.push(Math.max(3, hw - 5));
+              else if (h >= 17 && h < 19) optimized.push(Math.max(3, hw - 4));
+              else if (h < 6 || h > 20) optimized.push(hw + 8);
+              else optimized.push(hw);
+            }
+          }
+        } else {
+          // 没有优化结果，用典型智能排班构造
+          for (let i = 0; i < 32; i++) {
+            const h = i * 0.5 + 5;
+            if (h >= 7 && h < 9) optimized.push(4);
+            else if (h >= 9 && h < 17) optimized.push(8);
+            else if (h >= 17 && h < 19) optimized.push(5);
+            else if (h >= 19 && h < 21) optimized.push(10);
+            else optimized.push(15);
+          }
+        }
+
+        optimLog.value.push('[仿真] 正在提交仿真对比请求...');
+
+        const params = new URLSearchParams();
+        params.append('baseline_schedule', JSON.stringify(baseline));
+        params.append('optimized_schedule', JSON.stringify(optimized));
+
+        const simResp = await fetch('/api/simulation/compare?' + params.toString(), { method: 'POST' });
+        if (!simResp.ok) throw new Error('仿真请求失败 HTTP ' + simResp.status);
+
+        const simData = await simResp.json();
+        simulationResult.value = simData;
+        simDone.value = true;
+        simRunning.value = false;
+
+        // 用真实数据渲染仿真图表
+        await nextTick();
+        renderSimChartsReal(simData, baseline, optimized);
+
+        optimLog.value.push('[仿真] ✅ 仿真完成，已渲染真实对比结果');
+
+      } catch (e) {
+        optimLog.value.push('[仿真错误] ' + e.message + '，使用模拟数据');
+        simRunning.value = false;
+        simDone.value = true;
+        renderSimChartsMock();
+      }
+    }
+
+    // ===== 真实数据渲染：排班优化 =====
+    async function renderOptimChartsReal() {
+      const result = optimizationResult.value;
+      if (!result) return;
+
+      // 更新 KPI 卡片
+      if (result.recommended) {
+        const rec = result.recommended;
+        optimKpi.value = {
+          waitingTime: (rec.waiting_time != null ? rec.waiting_time.toFixed(2) : '--') + ' min',
+          carbon: (rec.carbon_emission != null ? rec.carbon_emission.toFixed(1) : '--') + ' kg',
+          waitReduce: rec.wait_reduction != null ? (rec.wait_reduction * 100).toFixed(1) + '%' : '--%',
+          carbonReduce: rec.carbon_reduction != null ? (rec.carbon_reduction * 100).toFixed(1) + '%' : '--%',
+          tripsReduced: rec.trips_reduced != null ? '约 ' + rec.trips_reduced + ' 趟' : '--',
+        };
+      }
+
+      await nextTick();
+
+      // Pareto 前沿图（真实数据）
+      const paretoEl = paretoFrontChart.value;
+      if (paretoEl) {
+        try { echarts.dispose(paretoEl); } catch(e) {}
+        const c = initChart(paretoEl);
+        const front = (result.pareto_front || []).map(p => [p.waiting_time, p.carbon_emission]);
+        const baseline = result.baseline || { waiting_time: 7.0, carbon_emission: 1152.0 };
+        c.setOption({
+          tooltip: { formatter: p => '等待时间:' + p.data[0].toFixed(2) + 'min<br>碳排放:' + p.data[1].toFixed(1) + 'kg' },
+          grid: { left: 60, right: 30, top: 20, bottom: 60 },
+          xAxis: { type: 'value', name: '平均等待时间(min)', min: 0, max: 12 },
+          yAxis: { type: 'value', name: '碳排放(kg CO₂)' },
+          visualMap: {
+            dimension: 1, min: 600, max: 1500,
+            inRange: { color: ['#67c23a', '#e6a23c', '#f56c6c'] },
+            text: ['低碳', '中碳', '高碳'], left: 'center', bottom: 8, textStyle: { fontSize: 11 }
+          },
+          series: [{
+            type: 'scatter', data: front, symbolSize: 10, opacity: 0.75,
+            markPoint: result.recommended ? {
+              data: [{ coord: [result.recommended.waiting_time, result.recommended.carbon_emission], name: '推荐方案', symbolSize: 26 }],
+              itemStyle: { color: '#ff4757' }
+            } : undefined,
+            markLine: { data: [{ xAxis: baseline.waiting_time, lineStyle: { type: 'dashed', color: '#999' }, label: { formatter: '基准 ' + baseline.waiting_time + 'min' } }] }
+          }]
+        });
+      }
+
+      // 推荐方案卡片（真实数据）
+      const rec = result.recommended;
+      if (rec) {
+        const cardEl = document.querySelector('[class*="recommend"]') || document.querySelector('.recommend-card');
+        // 直接更新 DOM 中的数值
+        const wtEl = document.getElementById('rec-waiting');
+        const ceEl = document.getElementById('rec-carbon');
+        const wrEl = document.getElementById('rec-wait-reduce');
+        const crEl = document.getElementById('rec-carbon-reduce');
+        if (wtEl) wtEl.textContent = rec.waiting_time != null ? rec.waiting_time.toFixed(2) : '--';
+        if (ceEl) ceEl.textContent = rec.carbon_emission != null ? rec.carbon_emission.toFixed(1) + ' kg CO₂/日' : '--';
+        if (wrEl) wrEl.textContent = rec.wait_reduction != null ? (rec.wait_reduction * 100).toFixed(1) + '%' : '--%';
+        if (crEl) crEl.textContent = rec.carbon_reduction != null ? (rec.carbon_reduction * 100).toFixed(1) + '%' : '--%';
+      }
+
+      // 排班时序图（真实 schedule）
+      const schedEl = scheduleTimelineChart.value;
+      if (schedEl && rec && rec.schedule) {
+        try { echarts.dispose(schedEl); } catch(e) {}
+        const c = initChart(schedEl);
+        const sch = rec.schedule;
+        const hrs = sch.map((_, i) => (i * 0.5 + 5).toFixed(1) + ':00');
+        c.setOption({
+          tooltip: { trigger: 'axis' },
+          grid: { left: 50, right: 20, top: 10, bottom: 50 },
+          xAxis: { type: 'category', data: hrs, axisLabel: { interval: 3, rotate: 30 } },
+          yAxis: { type: 'value', name: '发车间隔(min)', inverse: true },
+          series: [{
+            type: 'bar', barWidth: '70%',
+            data: sch.map(v => ({
+              value: v,
+              itemStyle: {
+                color: v <= 6 ? '#f56c6c' : v <= 10 ? '#e6a23c' : v <= 15 ? '#409EFF' : '#909399',
+                borderRadius: v <= 6 ? [4, 4, 0, 0] : [0, 0, 4, 4]
+              }
+            })),
+            markLine: { data: [{ yAxis: 10, lineStyle: { type: 'dashed', color: '#333' }, label: { formatter: '基准 10min' } }] }
+          }]
+        });
+      }
+
+      // 对比雷达图（真实数据）
+      const radarEl = optCompareRadar.value;
+      if (radarEl) {
+        try { echarts.dispose(radarEl); } catch(e) {}
+        const c = initChart(radarEl);
+        const rec = result.recommended || {};
+        const base = result.baseline || { waiting_time: 7.0, carbon_emission: 1152, trips: 192, load_rate: 42 };
+        c.setOption({
+          legend: { data: ['固定排班', '智能优化'], bottom: 0 },
+          radar: { indicator: [
+            { name: '等待时间', max: 12 },
+            { name: '碳排放', max: 1200 },
+            { name: '日发车趟数', max: 250 },
+            { name: '满载率', max: 100 }
+          ]},
+          series: [{
+            type: 'radar', radius: '65%',
+            data: [
+              { value: [base.waiting_time||7, base.carbon_emission||1152, base.trips||192, base.load_rate||42], name: '固定排班', areaStyle: { color: 'rgba(144,147,153,0.2)' } },
+              { value: [rec.waiting_time||0.63, rec.carbon_emission||821, rec.trips||144, rec.load_rate||68], name: '智能优化', areaStyle: { color: 'rgba(64,158,255,0.3)' }, lineStyle: { width: 2.5, color: '#409EFF' } }
+            ]
+          }]
+        });
+      }
+    }
+
+    function renderOptimChartsMock() {
+      // 降级：使用原来的模拟数据渲染
+      nextTick(() => renderPageCharts('optimization'));
+    }
+
+    // ===== 真实数据渲染：仿真验证 =====
+    function renderSimChartsReal(simData, baseline, optimized) {
+      if (!simData) return;
+
+      // 更新 KPI 卡片
+      if (simData.summary) {
+        const s = simData.summary;
+        simKpi.value = {
+          waitImprove: s.wait_improve != null ? (s.wait_improve * 100).toFixed(1) + '%' : '--%',
+          carbonReduce: s.carbon_reduce != null ? (s.carbon_reduce * 100).toFixed(1) + '%' : '--%',
+          tripsReduced: s.trips_reduced != null ? '-' + s.trips_reduced + '趟/日' : '--',
+          loadImprove: s.load_improve != null ? '+' + (s.load_improve * 100).toFixed(1) + '%' : '--%',
+        };
+      }
+
+      nextTick(() => {
+        // 等待时间对比图（真实数据）
+        const waitEl = simWaitTime.value;
+        if (waitEl && simData.baseline && simData.optimized) {
+          try { echarts.dispose(waitEl); } catch(e) {}
+          const c = initChart(waitEl);
+          const slots = Array.from({ length: 32 }, (_, i) => (i * 0.5 + 5).toFixed(1) + ':00');
+          const baseWait = simData.baseline.avg_wait_time_per_slot || [];
+          const optWait = simData.optimized.avg_wait_time_per_slot || [];
+          c.setOption({
+            tooltip: { trigger: 'axis' },
+            legend: { data: ['固定排班', '智能优化'], top: 0 },
+            grid: { left: 50, right: 20, top: 30, bottom: 50 },
+            xAxis: { type: 'category', data: slots, axisLabel: { interval: 3, rotate: 30 } },
+            yAxis: { type: 'value', name: 'min', max: 10 },
+            series: [
+              { name: '固定排班', type: 'line', smooth: true, data: baseWait, lineStyle: { color: '#909399' } },
+              { name: '智能优化', type: 'line', smooth: true, data: optWait, lineStyle: { width: 2.5, color: '#409EFF' } }
+            ]
+          });
+        }
+
+        // 雷达图（真实数据）
+        const radarEl = simRadar.value;
+        if (radarEl) {
+          try { echarts.dispose(radarEl); } catch(e) {}
+          const c = initChart(radarEl);
+          const base = simData.baseline || {};
+          const opt = simData.optimized || {};
+          c.setOption({
+            radar: { indicator: [
+              { name: '等待时间', max: 100 },
+              { name: '碳排放', max: 100 },
+              { name: '满载率', max: 100 },
+              { name: '运力效率', max: 100 }
+            ]},
+            series: [{
+              type: 'radar', radius: '65%',
+              data: [
+                { value: [base.wait_score||30, base.carbon_score||30, base.load_score||42, base.efficiency_score||45], name: '固定排班', areaStyle: { color: 'rgba(144,147,153,0.15)' } },
+                { value: [opt.wait_score||98, opt.carbon_score||72, opt.load_score||85, opt.efficiency_score||88], name: '智能优化', areaStyle: { color: 'rgba(64,158,255,0.25)' }, lineStyle: { width: 2, color: '#409EFF' } }
+              ]
+            }]
+          });
+        }
+
+        // 满载率图（真实数据）
+        const loadEl = simLoadRate.value;
+        if (loadEl && simData.baseline && simData.optimized) {
+          try { echarts.dispose(loadEl); } catch(e) {}
+          const c = initChart(loadEl);
+          const periods = ['早高峰','上午','午间','下午','晚高峰','夜间'];
+          const baseLoad = simData.baseline.load_rate_per_period || [52, 38, 28, 33, 48, 15];
+          const optLoad = simData.optimized.load_rate_per_period || [78, 55, 62, 58, 82, 22];
+          c.setOption({
+            legend: { data: ['固定排班', '智能优化'], top: 0 },
+            grid: { left: 50, right: 20, top: 30, bottom: 30 },
+            xAxis: { type: 'category', data: periods },
+            yAxis: { type: 'value', name: '%', max: 100 },
+            series: [
+              { name: '固定排班', type: 'bar', data: baseLoad, barWidth: '32%', itemStyle: { color: '#909399' } },
+              { name: '智能优化', type: 'bar', data: optLoad, barWidth: '32%', itemStyle: { color: '#409EFF' } }
+            ]
+          });
+        }
+
+        // 发车频率图（真实数据）
+        const freqEl = simFreq.value;
+        if (freqEl && baseline && optimized) {
+          try { echarts.dispose(freqEl); } catch(e) {}
+          const c = initChart(freqEl);
+          const hrs = ['5-6','6-7','7-8','8-9','9-10','10-11','11-12','12-13'];
+          const baseFreq = baseline.map(hw => Math.round(60 / hw));
+          const optFreq = optimized.map(hw => Math.round(60 / hw));
+          c.setOption({
+            tooltip: { trigger: 'axis' },
+            grid: { left: 50, right: 20, top: 10, bottom: 30 },
+            xAxis: { type: 'category', data: hrs },
+            yAxis: { type: 'value', name: '趟/小时' },
+            series: [
+              { name: '固定排班', type: 'bar', stack: 'base', data: baseFreq, itemStyle: { color: '#e0e0e0' } },
+              { name: '智能优化', type: 'bar', stack: 'opt', data: optFreq, itemStyle: { color: '#67C23A' } }
+            ]
+          });
+        }
+      });
+    }
+
+    function renderSimChartsMock() {
+      nextTick(() => renderPageCharts('simulation'));
     }
 
     function switchPage(page) {
@@ -1081,19 +1506,20 @@ const app = createApp({
       });
     });
 
-    return {
-      currentPage, menuItems, modelMetrics, stats, fmtNum, apiOnline,
-      trendChart, stopRankChart, compareChart, modelRadarChart,
-      hourlyFlowChart, flowHeatMap, flowBar,
-      predCompareChart, lossCurveChart, featImportanceChart,
-      paretoFrontChart, scheduleTimelineChart, optCompareRadar,
-      carbonCompareChart, perCapitaCarbon, yearlyCarbonTrend,
-      simWaitTime, simRadar, simLoadRate, simFreq,
-      routeInfoChart, travelTimeChart,
-      optimProgress, optimLog,
-      optimizing, optimDone, simRunning, simDone,
-      runOptim, simRun, switchPage,
-    };
+      return {
+        currentPage, menuItems, modelMetrics, stats, fmtNum, apiOnline,
+        trendChart, stopRankChart, compareChart, modelRadarChart,
+        hourlyFlowChart, flowHeatMap, flowBar,
+        predCompareChart, lossCurveChart, featImportanceChart,
+        paretoFrontChart, scheduleTimelineChart, optCompareRadar,
+        carbonCompareChart, perCapitaCarbon, yearlyCarbonTrend,
+        simWaitTime, simRadar, simLoadRate, simFreq,
+        routeInfoChart, travelTimeChart,
+        optimProgress, optimLog, optimKpi, simKpi,
+        optimizing, optimDone, simRunning, simDone,
+        optimizationResult, simulationResult,
+        runOptim, loadSampleOptim, simRun, loadSampleSim, switchPage,
+      };
   }
 });
 

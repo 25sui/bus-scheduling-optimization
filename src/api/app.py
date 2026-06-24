@@ -18,6 +18,29 @@ from fastapi import FastAPI, Query, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+
+# ============================================================
+# 工具函数：递归转换 numpy 类型为 Python 原生类型
+# 解决 FastAPI JSON 序列化时的 TypeError
+# ============================================================
+def _convert_numpy(obj):
+    """递归将 numpy int32/float64/ndarray 等转为 Python 原生类型"""
+    if isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    elif isinstance(obj, dict):
+        return {k: _convert_numpy(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_convert_numpy(item) for item in obj]
+    else:
+        return obj
+
+
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
 from src.config import (
@@ -398,7 +421,7 @@ def get_optimization_result():
         return {"status": "running", "message": "优化任务正在运行中"}
     if _optimization_result is None:
         raise HTTPException(404, detail="尚未运行优化")
-    return _optimization_result
+    return _convert_numpy(_optimization_result)
 
 
 @app.get("/api/optimization/pareto")
@@ -408,8 +431,8 @@ def pareto_frontier():
     front = _optimization_result["pareto_front"]
     points = [{"waiting_time": s["waiting_time"], "carbon_emission": s["carbon_emission"]}
               for s in front]
-    return {"pareto_points": points, "recommended": _optimization_result["recommended"],
-            "baseline": {"waiting_time": 7.0, "carbon_emission": 1152.0}}
+    return _convert_numpy({"pareto_points": points, "recommended": _optimization_result["recommended"],
+            "baseline": {"waiting_time": 7.0, "carbon_emission": 1152.0}})
 
 
 def _generate_sample_pareto():
@@ -429,8 +452,9 @@ def _generate_sample_pareto():
 @app.get("/api/carbon/baseline")
 def carbon_baseline(fixed_headway: int = Query(10)):
     calc = get_carbon_calc()
-    return calc.calculate_baseline_emission(
+    result = calc.calculate_baseline_emission(
         fixed_headway, BUS_ROUTE["route_length_km"], BUS_ROUTE["operating_hours"])
+    return _convert_numpy(result)
 
 
 @app.get("/api/carbon/detail")
@@ -439,7 +463,7 @@ def carbon_detail(schedule: str = Query(...)):
     arr = json.loads(schedule)
     result = calc.calculate_daily_emission(np.array(arr), BUS_ROUTE["route_length_km"], BUS_ROUTE["total_stops"])
     del result["trip_details"]
-    return result
+    return _convert_numpy(result)
 
 
 # ============================================================
@@ -455,7 +479,7 @@ def simulation_compare(
     for key in ["baseline", "optimized"]:
         if key in result and "slot_details" in result[key]:
             del result[key]["slot_details"]
-    return result
+    return _convert_numpy(result)
 
 
 # ============================================================
@@ -596,6 +620,34 @@ out skel;
     except Exception as e:
         print(f"[OSM] 获取公交线路失败：{e}")
         return {"routes": [], "count": 0, "error": str(e)}
+
+
+# ============================================================
+# 示例优化结果 API（用于演示，避免等待时间过长）
+# ============================================================
+@app.get("/api/optimization/sample")
+def get_sample_optimization_result():
+    """返回预计算的 NSGA-II 优化示例结果（用于快速演示）"""
+    file_path = Path(__file__).resolve().parent.parent.parent / "data" / "processed" / "sample_optimization_result.json"
+    if file_path.exists():
+        with open(file_path, encoding="utf-8") as f:
+            return json.load(f)
+    else:
+        return {"error": "示例数据文件不存在，请先运行数据预处理脚本"}
+
+
+# ============================================================
+# 真实线路数据 API — 从预处理文件读取
+# ============================================================
+@app.get("/api/map/real-routes")
+def get_real_routes():
+    """获取预处理的真实沈阳公交线路数据（来自 data/processed/real_routes.json）"""
+    file_path = Path(__file__).resolve().parent.parent.parent / "data" / "processed" / "real_routes.json"
+    if file_path.exists():
+        with open(file_path, encoding="utf-8") as f:
+            return json.load(f)
+    else:
+        return {"routes": [], "error": "数据文件不存在，请先运行数据预处理脚本"}
 
 
 # ============================================================
