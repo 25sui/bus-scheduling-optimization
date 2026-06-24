@@ -46,7 +46,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 from src.config import (
     API_HOST, API_PORT, CORS_ORIGINS,
     PROCESSED_DATA_DIR, MODEL_DIR,
-    BUS_ROUTE, OPTIMIZATION_CONFIG,
+    BUS_ROUTE, OPTIMIZATION_CONFIG, CARBON_EMISSION,
 )
 from src.optimization.nsga2_scheduler import NSGA2Scheduler
 from src.optimization.simulator import BusOperationSimulator
@@ -181,7 +181,7 @@ def get_simulator():
 def get_carbon_calc():
     global _carbon_calc
     if _carbon_calc is None:
-        _carbon_calc = CarbonCalculator()
+        _carbon_calc = CarbonCalculator(config=CARBON_EMISSION)
     return _carbon_calc
 
 

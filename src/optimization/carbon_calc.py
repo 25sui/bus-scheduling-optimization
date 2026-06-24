@@ -11,35 +11,49 @@ class CarbonCalculator:
     """公交碳排放计算器"""
 
     def __init__(self, config: dict = None):
-        self.config = config or {
-            "large_bus_emission": 1.20,    # kg CO2/km (大型车)
-            "medium_bus_emission": 0.80,   # kg CO2/km (中型车)
-            "large_bus_capacity": 80,       # 额定载客
-            "medium_bus_capacity": 40,      # 额定载客
-        }
+        # 兼容 config.py 中的键名格式（"large_bus" 或 "large_bus_emission"）
+        if config:
+            self.config = {
+                "large_bus_emission": config.get("large_bus_emission", config.get("large_bus", 1.2)),
+                "medium_bus_emission": config.get("medium_bus_emission", config.get("medium_bus", 0.8)),
+                "large_bus_capacity": config.get("large_bus_capacity", config.get("large_bus_capacity", 80)),
+                "medium_bus_capacity": config.get("medium_bus_capacity", config.get("medium_bus_capacity", 40)),
+            }
+        else:
+            self.config = {
+                "large_bus_emission": 1.2,
+                "medium_bus_emission": 0.8,
+                "large_bus_capacity": 80,
+                "medium_bus_capacity": 40,
+            }
+        # 从配置中读取公交车型（默认大型车）
+        self.default_bus_type = "large"
+        self.default_load_ratio = 0.6  # 默认载客率 60%
 
     def calculate_trip_emission(self, distance_km: float,
-                                 bus_type: str = "large",
-                                 load_ratio: float = 0.5) -> float:
+                                 bus_type: str = None,
+                                 load_ratio: float = None) -> float:
         """
         计算单趟行程碳排放
 
         Args:
-            distance_km: 行驶距离(公里)
-            bus_type: 车型 ("large" / "medium")
-            load_ratio: 载客率 (0-1)
+            distance_km: 行驶距离(公里)，应为往返距离
+            bus_type: 车型 ("large" / "medium")，None 则使用默认
+            load_ratio: 载客率 (0-1)，None 则使用默认
 
         Returns:
             emission: 碳排放量 (kg CO2)
         """
-        if bus_type == "large":
+        bt = bus_type or self.default_bus_type
+        lr = load_ratio if load_ratio is not None else self.default_load_ratio
+
+        if bt == "large":
             base_rate = self.config["large_bus_emission"]
         else:
             base_rate = self.config["medium_bus_emission"]
 
-        # 载客率调整：空载时单位排放略高（分摊到更少乘客），满载时效率更高
-        # 使用线性插值：满载时排放系数为基准，空载时增加10%
-        efficiency_factor = 0.9 + 0.1 * (1 - load_ratio)
+        # 载客率调整：空载时单位排放略高，满载时效率更高
+        efficiency_factor = 0.9 + 0.1 * (1 - lr)
 
         emission = distance_km * base_rate * efficiency_factor
         return round(emission, 3)
@@ -68,14 +82,16 @@ class CarbonCalculator:
                 continue
 
             # 每个时间窗口的发车班次
-            window_hours = 0.5  # 30分钟窗口
-            trips_in_window = int(np.ceil(window_hours * 60 / headway))
+            window_minutes = 30
+            trips_in_window = int(np.ceil(window_minutes / headway))
             total_trips += trips_in_window
 
             for _ in range(trips_in_window):
+                # 往返距离 = 单程 × 2
                 emission = self.calculate_trip_emission(
-                    route_length_km * 2,  # 往返
-                    bus_type="large"
+                    route_length_km * 2,
+                    bus_type=self.default_bus_type,
+                    load_ratio=self.default_load_ratio,
                 )
                 total_emission += emission
                 trip_details.append({
@@ -95,23 +111,34 @@ class CarbonCalculator:
                                     route_length_km: float,
                                     operating_hours: int = 16) -> dict:
         """
-        计算固定排班方案的基准碳排放
+        计算固定排班方案的基准碳排放（与 calculate_daily_emission 逻辑一致）
 
         Args:
             fixed_headway: 固定发车间隔(分钟)
-            route_length_km: 线路长度
+            route_length_km: 线路长度(单程, km)
             operating_hours: 运营小时数
+
+        Returns:
+            包含基准碳排放的字典
         """
         total_minutes = operating_hours * 60
+        # 总趟数 = 运营总分钟数 / 发车间隔
         total_trips = int(np.ceil(total_minutes / fixed_headway))
-        total_distance = total_trips * route_length_km * 2  # 往返
+
+        # 每趟往返距离
+        trip_distance = route_length_km * 2
+
+        # 总距离
+        total_distance = total_trips * trip_distance
+
+        # 总碳排放
         total_emission = total_distance * self.config["large_bus_emission"]
 
         return {
             "fixed_headway": fixed_headway,
             "total_trips": total_trips,
-            "total_emission_kg": round(total_emission, 2),
             "total_distance_km": total_distance,
+            "total_emission_kg": round(total_emission, 2),
         }
 
 
@@ -124,8 +151,8 @@ def main():
     calc = CarbonCalculator()
 
     # 测试单趟计算
-    emission_15km = calc.calculate_trip_emission(15.0, "large", 0.6)
-    print(f"\n单趟(15km, 大型车, 60%载客): {emission_15kg} kg CO2")
+    emission_15km = calc.calculate_trip_emission(15.0 * 2, "large", 0.6)
+    print(f"\n单趟(15km×2, 大型车, 60%载客): {emission_15km} kg CO2")
 
     # 测试排班方案对比
     schedule_dense = [5] * 16 + [10] * 16  # 高峰密集 + 平峰

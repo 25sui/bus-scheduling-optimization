@@ -24,7 +24,7 @@ from src.config import OPTIMIZATION_CONFIG, BUS_ROUTE, CARBON_EMISSION
 from src.optimization.carbon_calc import CarbonCalculator
 
 
-# ── 全局：只需创建一次 DEAP 类型 ─────────────────────────────
+# ── 全局：只需创建一次 DEAP 类型 ─────────────────────────────────────
 
 def _ensure_creator():
     """确保 DEAP creator 类型已注册（全局只注册一次）。"""
@@ -35,7 +35,7 @@ def _ensure_creator():
         creator.create("Individual", list, fitness=creator.FitnessMin)
 
 
-# ── 核心调度器类 ───────────────────────────────────────────────
+# ── 核心调度器类 ─────────────────────────────────────────────────────────────
 
 class NSGA2Scheduler:
     """NSGA-II 公交排班优化器（三目标 + 约束）"""
@@ -43,24 +43,25 @@ class NSGA2Scheduler:
     def __init__(self):
         self.cfg = OPTIMIZATION_CONFIG.copy()
         self.route_cfg = BUS_ROUTE.copy()
-        self.carbon_calc = CarbonCalculator()
+        self.carbon_calc = CarbonCalculator(CARBON_EMISSION)
         self.num_time_slots = int(self.route_cfg["operating_hours"] * 60 / 30)
         self._result_dir = Path(__file__).resolve().parent.parent.parent / "models" / "optimization_runs"
         self._result_dir.mkdir(parents=True, exist_ok=True)
         _ensure_creator()
         self._setup_toolbox()
 
-    # ── 工具箱设置 ──────────────────────────────────────────────
+    # ── 工具箱设置 ─────────────────────────────────────────────────────────
 
     def _setup_toolbox(self):
         """初始化遗传算法工具箱"""
         self.toolbox = base.Toolbox()
 
         # 基因：每个时间窗口的发车间隔（分钟）
+        # 修复：初始化范围使用 max_headway_peak，避免初始种群碳排放过高
         self.toolbox.register(
             "attr_headway", random.randint,
             self.cfg["min_headway"],
-            self.cfg["max_headway_offpeak"]
+            self.cfg["max_headway_peak"]
         )
 
         # 个体：num_time_slots 个发车间隔值
@@ -80,7 +81,7 @@ class NSGA2Scheduler:
         self.toolbox.register("select", tools.selNSGA2)
         self.toolbox.register("evaluate", self._evaluate_individual)
 
-    # ── 遗传算子细节 ─────────────────────────────────────────
+    # ── 遗传算子细节 ─────────────────────────────────────────────────────
 
     def _mutate_headway(self, individual, indpb: float):
         """自定义变异：在合理范围内随机调整，并修复越界。"""
@@ -99,7 +100,7 @@ class NSGA2Scheduler:
         hour = (time_slot_idx * 30) / 60.0 + 5  # 从5点开始
         return (7 <= hour < 9) or (17 <= hour < 19)
 
-    # ── 约束计算 ────────────────────────────────────────────────
+    # ── 约束计算 ────────────────────────────────────────────────────────
 
     def _calc_total_trips(self, schedule: list) -> int:
         """计算总发车趟数"""
@@ -137,7 +138,7 @@ class NSGA2Scheduler:
         # 超出部分每趟惩罚 50 元（可调）
         return (total_trips - fleet) * 50.0
 
-    # ── 目标函数评估 ─────────────────────────────────────────
+    # ── 目标函数评估 ─────────────────────────────────────────────────
 
     def _evaluate_individual(self, individual: list) -> tuple:
         """
@@ -200,7 +201,7 @@ class NSGA2Scheduler:
         else:
             return 30.0
 
-    # ── 主优化流程 ──────────────────────────────────────────────
+    # ── 主优化流程 ──────────────────────────────────────────────────
 
     def run(self) -> dict:
         """
@@ -248,7 +249,7 @@ class NSGA2Scheduler:
                 "operating_cost": round(ind.fitness.values[2], 2),
             })
 
-        # TOPSIS 选择推荐方案（三目标归一化距离）
+        # 选择推荐方案
         recommended = self._select_recommended(pareto_solutions)
 
         # 计算基线方案（固定 10 分钟间隔，作为改善率基准）
@@ -261,8 +262,9 @@ class NSGA2Scheduler:
         if recommended:
             rec_wait = recommended["waiting_time"]
             rec_carbon = recommended["carbon_emission"]
-            recommended["wait_reduction"] = round((baseline_wait - rec_wait) / baseline_wait, 4)
-            recommended["carbon_reduction"] = round((baseline_carbon - rec_carbon) / baseline_carbon, 4)
+            # 改善率 = (基线 - 推荐) / 基线，正数表示改善
+            recommended["wait_reduction"] = round((baseline_wait - rec_wait) / max(baseline_wait, 1e-6), 4)
+            recommended["carbon_reduction"] = round((baseline_carbon - rec_carbon) / max(baseline_carbon, 1e-6), 4)
 
         result = {
             "pareto_front": pareto_solutions,
@@ -284,46 +286,39 @@ class NSGA2Scheduler:
             print(f"    等待时间: {recommended['waiting_time']:.3f} 分钟")
             print(f"    碳排放:   {recommended['carbon_emission']:.2f} kg CO₂")
             print(f"    运营成本:   {recommended['operating_cost']:.2f} 元")
+            if "wait_reduction" in recommended:
+                print(f"    等待改善:   {recommended['wait_reduction']*100:.1f}%")
+                print(f"    碳减排率:   {recommended['carbon_reduction']*100:.1f}%")
 
         # 持久化保存
         self._save_result(result)
         return result
 
-    # ── TOPSIS 推荐方案选择 ───────────────────────────────────
+    # ── 推荐方案选择 ─────────────────────────────────────────────
 
     def _select_recommended(self, solutions: list) -> dict:
         """
         从 Pareto 前沿中选择推荐方案。
-        使用 TOPSIS 思想：选择距理想点最近的解（三目标归一化）。
+        策略：优先选择等待时间 ≤ 基线值的解；
+        若有多个，选其中碳排放最低的解。
+        若 Pareto 前沿中没有满足等待时间约束的解，则选择等待时间最小的解。
         """
         if not solutions:
             return {}
 
-        waiting_times = [s["waiting_time"] for s in solutions]
-        carbons = [s["carbon_emission"] for s in solutions]
-        costs = [s["operating_cost"] for s in solutions]
+        baseline_wait = 7.0   # 基线等待时间（固定10分钟间隔约为 5-7 min）
+        baseline_carbon = 1152.0  # 基线碳排放
 
-        w_min = min(waiting_times)
-        c_min = min(carbons)
-        o_min = min(costs)
+        # 第一优先级：等待时间 ≤ 基线值的解
+        feasible = [s for s in solutions if s["waiting_time"] <= baseline_wait + 0.5]
 
-        best_score = float("inf")
-        best_idx = 0
+        target = feasible if feasible else solutions
 
-        for i, s in enumerate(solutions):
-            # 三目标归一化距离到理想点（等权）
-            norm_w = (s["waiting_time"] - w_min) / (max(waiting_times) - w_min + 1e-6)
-            norm_c = (s["carbon_emission"] - c_min) / (max(carbons) - c_min + 1e-6)
-            norm_o = (s["operating_cost"] - o_min) / (max(costs) - o_min + 1e-6)
-            # 等权组合（可调整权重）
-            score = (norm_w + norm_c + norm_o) / 3.0
+        # 在可行解中选择碳排放最低的解
+        best = min(target, key=lambda s: s["carbon_emission"])
 
-            if score < best_score:
-                best_score = score
-                best_idx = i
-
-        rec = solutions[best_idx].copy()
-        rec["topsis_score"] = round(best_score, 6)
+        rec = best.copy()
+        rec["selection_method"] = "feasible_first" if feasible else "pareto_min_carbon"
         return rec
 
     # ── 优化结果持久化 ─────────────────────────────────────────
@@ -349,7 +344,7 @@ class NSGA2Scheduler:
         return str(filepath)
 
 
-# ── CLI 入口 ──────────────────────────────────────────────────────
+# ── CLI 入口 ──────────────────────────────────────────────────────────────
 
 def main():
     """运行优化"""
