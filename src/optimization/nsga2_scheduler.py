@@ -75,26 +75,38 @@ class NSGA2Scheduler:
         # 种群
         self.toolbox.register("population", tools.initRepeat, list, self.toolbox.individual)
 
-        # 遗传算子（SBX有界交叉 + 多项式变异，避免越界）
+        # 遗传算子（SBX有界交叉 + 有界多项式变异）
         eta = 20.0
         min_h = self.cfg["min_headway"]
         max_h = self.cfg["max_headway_offpeak"]
-        # cxSimulatedBinaryB 不存在，改用 cxSimulatedBinary（DEAP 1.x 正确名称）
-        self.toolbox.register("mate", tools.cxSimulatedBinary, eta=eta)
-        # mutPolynomialB 不存在，改用 mutPolynomialBounded（DEAP 1.x 正确名称）
-        self.toolbox.register("mutate", tools.mutPolynomialBounded, eta=eta, indpb=0.2)
+        n = self.num_time_slots
+        # low/up 数组：每个基因（时段）的合法边界
+        low = [float(min_h)] * n
+        up  = [float(max_h)] * n
+
+        # cxSimulatedBinaryBounded：有界SBX交叉（确保offspring在边界内）
+        self.toolbox.register(
+            "mate", tools.cxSimulatedBinaryBounded,
+            eta=eta, low=low, up=up
+        )
+        # mutPolynomialBounded：有界多项式变异（自身处理边界）
+        self.toolbox.register(
+            "mutate", tools.mutPolynomialBounded,
+            eta=eta, indpb=0.2, low=low, up=up
+        )
         self.toolbox.register("select", tools.selNSGA2)
         self.toolbox.register("evaluate", self._evaluate_individual)
 
-        # 边界修复装饰器：确保基因值在 [min_headway, max_headway_offpeak] 内且为整数
+        # 额外保险：装饰器再次裁剪（防止边界遗漏）
         def _make_boundary_repair(min_val, max_val):
             def _repair_decorator(func):
                 def _wrapper(*args, **kwargs):
                     offspring = func(*args, **kwargs)
+                    # offspring 是元组 (child1, child2) 或 (mutant,)
                     for ind in offspring:
                         for i in range(len(ind)):
-                            ind[i] = int(np.clip(round(ind[i], 0), min_val, max_val))
-                    return offspring
+                            ind[i] = int(np.clip(round(float(ind[i]), 0), min_val, max_val))
+                    return offspring  # ← 必须返回修改后的 offspring
                 return _wrapper
             return _repair_decorator
 
@@ -189,6 +201,11 @@ class NSGA2Scheduler:
         # 约束惩罚（仅加在运营成本上，不影响等待时间和碳排放目标）
         penalty = self._vehicle_penalty(schedule)
         operating_cost += penalty
+
+        # 碳排放约束惩罚：如果超标，返回 inf 让解被彻底淘汰
+        baseline_carbon = getattr(self, 'baseline_carbon', 3248.64)
+        if total_carbon > baseline_carbon * 1.05:
+            return (float('inf'), float('inf'), float('inf'))
 
         return (avg_wait, total_carbon, operating_cost)
 
@@ -287,6 +304,7 @@ class NSGA2Scheduler:
         baseline_metrics = self._evaluate_individual(baseline_schedule)
         baseline_wait = baseline_metrics[0]
         baseline_carbon = baseline_metrics[1]
+        self.baseline_carbon = baseline_carbon  # 保存为实例变量，供 _evaluate_individual 使用
         print(f"[基线方案] 固定 10 分钟间隔:")
         print(f"  等待时间: {baseline_wait:.3f} 分钟")
         print(f"  碳排放:   {baseline_carbon:.2f} kg CO₂")
@@ -342,10 +360,9 @@ class NSGA2Scheduler:
         """
         从 Pareto 前沿中选择推荐方案。
         策略：
-        1. 优先选择等待时间 ≤ 基线值 且 碳排放 ≤ 基线值 的解（硬约束）；
+        1. 优先选择等待时间 ≤ 基线值 且 碳排放 ≤ 基线值 × 1.1 的解（允许10%容忍）；
         2. 若有多个，选其中等待时间最短的解（兼顾乘客体验）；
-        3. 若没有同时满足的，则选择综合得分最高的解：
-           综合得分 = 等待时间改善率 × 0.5 + 碳排放改善率 × 0.5
+        3. 若没有满足的，则返回空字典（让前端提示用户约束过严）。
         """
         if not solutions:
             return {}
@@ -356,10 +373,11 @@ class NSGA2Scheduler:
         if baseline_carbon is None:
             baseline_carbon = 1152.0  # 与 run() 中的 baseline 一致
 
-        # 第一优先级：等待时间 ≤ 基线值 且 碳排放 ≤ 基线值（硬约束，无容忍）
+        # 第一优先级：等待时间 ≤ 基线值 且 碳排放 ≤ 基线值 × 1.1（允许10%容忍）
+        carbon_threshold = baseline_carbon * 1.1  # 允许超出基线 10%
         feasible = [s for s in solutions
                         if s["waiting_time"] <= baseline_wait
-                        and s["carbon_emission"] <= baseline_carbon]
+                        and s["carbon_emission"] <= carbon_threshold]
 
         if feasible:
             # 在可行解中选择等待时间最短的解（兼顾乘客体验）
@@ -368,17 +386,11 @@ class NSGA2Scheduler:
             rec["selection_method"] = "feasible_both"
             return rec
 
-        # 第二优先级：没有同时满足的，选择碳排放最低的解
-        # （因为硬约束是碳排放必须 ≤ 基线，若无法满足，则退而求其次选碳排放最小的）
-        best = min(solutions, key=lambda s: s["carbon_emission"])
-        rec = best.copy()
-        rec["selection_method"] = "min_carbon_fallback"
-        # 仍计算改善率字段（可能为负值）
-        wait_red = (baseline_wait - rec["waiting_time"]) / max(baseline_wait, 1e-6)
-        carbon_red = (baseline_carbon - rec["carbon_emission"]) / max(baseline_carbon, 1e-6)
-        rec["wait_reduction"] = round(wait_red, 4)
-        rec["carbon_reduction"] = round(carbon_red, 4)
-        return rec
+        # 没有满足约束的解：返回空字典（不推荐次优解，避免误导用户）
+        print(f"[推荐] 警告：没有找到满足约束的解（等待时间≤{baseline_wait}，碳排放≤{carbon_threshold:.1f}）")
+        print(f"  Pareto 前沿中最小碳排放 = {min(s['carbon_emission'] for s in solutions):.2f} kg")
+        print(f"  建议：放宽约束或增加优化迭代次数")
+        return {}  # 返回空字典，让前端处理
 
     # ── 优化结果持久化 ─────────────────────────────────────────
 
