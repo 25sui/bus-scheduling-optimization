@@ -285,6 +285,10 @@ class NSGA2Scheduler:
         baseline_metrics = self._evaluate_individual(baseline_schedule)
         baseline_wait = baseline_metrics[0]
         baseline_carbon = baseline_metrics[1]
+        print(f"[基线方案] 固定 10 分钟间隔:")
+        print(f"  等待时间: {baseline_wait:.3f} 分钟")
+        print(f"  碳排放:   {baseline_carbon:.2f} kg CO₂")
+        print(f"  运营成本:   {baseline_metrics[2]:.2f} 元")
 
         # 选择推荐方案（传入动态基线）
         recommended = self._select_recommended(pareto_solutions, baseline_wait, baseline_carbon)
@@ -317,9 +321,12 @@ class NSGA2Scheduler:
             print(f"    等待时间: {recommended['waiting_time']:.3f} 分钟")
             print(f"    碳排放:   {recommended['carbon_emission']:.2f} kg CO₂")
             print(f"    运营成本:   {recommended['operating_cost']:.2f} 元")
+            print(f"  [调试] baseline_carbon = {baseline_carbon:.2f} kg CO₂")
+            print(f"  [调试] carbon_reduction = ({baseline_carbon:.2f} - {recommended['carbon_emission']:.2f}) / {baseline_carbon:.2f} = {(baseline_carbon - recommended['carbon_emission']) / baseline_carbon * 100:.1f}%")
             if "wait_reduction" in recommended:
                 print(f"    等待改善:   {recommended['wait_reduction']*100:.1f}%")
                 print(f"    碳减排率:   {recommended['carbon_reduction']*100:.1f}%")
+                print(f"    选择方法:   {recommended.get('selection_method', 'unknown')}")
 
         # 持久化保存
         self._save_result(result)
