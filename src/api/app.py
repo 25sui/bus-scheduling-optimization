@@ -610,6 +610,24 @@ else:
     print(f"[静态文件] 前端目录不存在：{_frontend_dir}")
 
 
+
+
+# ============================================================
+# 真实线路数据 API — 从预处理文件读取
+# ============================================================
+@app.get('/api/map/real-routes')
+def get_real_routes():
+    """获取预处理的真实沈阳公交线路数据（来自 data/processed/real_routes.json）"""
+    import json
+    from pathlib import Path
+    file_path = Path(__file__).resolve().parent.parent.parent / 'data' / 'processed' / 'real_routes.json'
+    if file_path.exists():
+        with open(file_path, encoding='utf-8') as f:
+            return json.load(f)
+    else:
+        return {'routes': [], 'error': '数据文件不存在，请先运行数据预处理脚本'}
+
+
 # ============================================================
 # 启动入口
 # ============================================================

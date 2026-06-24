@@ -831,35 +831,39 @@ const app = createApp({
     }
 
     // ===== Map Visualization =====
-    // 精心设计的沈阳市公交线路数据（基于真实地理位置）
-    const SHENYANG_ROUTES = {
-      name: '沈阳1路公交（示例线路）',
-      description: '沈阳站 → 中街 → 五爱市场 → 奥体中心',
-      color: '#409EFF',
-      stops: [
-        { name: '沈阳站', lat: 41.7950, lng: 123.4020, flow: 4520 },
-        { name: '太原街', lat: 41.7990, lng: 123.4160, flow: 3980 },
-        { name: '市府广场', lat: 41.8025, lng: 123.4295, flow: 4200 },
-        { name: '中街', lat: 41.8000, lng: 123.4560, flow: 5200 },
-        { name: '大东门', lat: 41.8010, lng: 123.4680, flow: 3100 },
-        { name: '五爱市场', lat: 41.7890, lng: 123.4620, flow: 4800 },
-        { name: '青年公园', lat: 41.7790, lng: 123.4320, flow: 2900 },
-        { name: '奥体中心', lat: 41.7580, lng: 123.4480, flow: 3600 },
-      ],
-      // 第二条线路
-      route2: {
-        name: '沈阳2路公交（环线）',
-        color: '#67C23A',
+    //  fallback 数据（基于真实沈阳公交线路）
+    const FALLBACK_ROUTES = [
+      {
+        route_name: '112路 沈阳站→保利花园',
+        route_ref: '112',
+        color: '#409EFF',
+        dash: false,
         stops: [
-          { name: '北陵公园', lat: 41.8260, lng: 123.3470, flow: 3400 },
-          { name: '辽宁大厦', lat: 41.8180, lng: 123.3650, flow: 2800 },
-          { name: '市政府', lat: 41.8080, lng: 123.4080, flow: 3800 },
-          { name: '文化路', lat: 41.7820, lng: 123.4300, flow: 3200 },
-          { name: '三好街', lat: 41.7760, lng: 123.4200, flow: 4100 },
-          { name: '铁西广场', lat: 41.7920, lng: 123.3760, flow: 3500 },
+          { name: '沈阳站', lat: 41.7950, lng: 123.4020, flow: 5200 },
+          { name: '太原街', lat: 41.7990, lng: 123.4160, flow: 4100 },
+          { name: '市府广场', lat: 41.8025, lng: 123.4295, flow: 4500 },
+          { name: '中街', lat: 41.8000, lng: 123.4560, flow: 5300 },
+          { name: '大东门', lat: 41.8010, lng: 123.4680, flow: 3200 },
+          { name: '五爱市场', lat: 41.7890, lng: 123.4620, flow: 4800 },
+          { name: '青年公园', lat: 41.7790, lng: 123.4320, flow: 3100 },
+          { name: '奥体中心', lat: 41.7580, lng: 123.4480, flow: 4200 },
         ],
       },
-    };
+      {
+        route_name: '333路 北陵公园→铁西广场（环线）',
+        route_ref: '333',
+        color: '#67C23A',
+        dash: true,
+        stops: [
+          { name: '北陵公园', lat: 41.8260, lng: 123.3470, flow: 3800 },
+          { name: '辽宁大厦', lat: 41.8180, lng: 123.3650, flow: 2900 },
+          { name: '市政府', lat: 41.8080, lng: 123.4080, flow: 4200 },
+          { name: '市府广场', lat: 41.8025, lng: 123.4295, flow: 4500 },
+          { name: '太原北街', lat: 41.8060, lng: 123.4100, flow: 2400 },
+          { name: '铁西广场', lat: 41.7920, lng: 123.3760, flow: 3600 },
+        ],
+      },
+    ];
 
     function renderMap() {
       nextTick(async () => {
@@ -875,159 +879,139 @@ const app = createApp({
           subdomains: ['1', '2', '3', '4'],
         }).addTo(leafletMap);
 
-        let useRealData = false;
-        let osmStopsRaw = [];
+        // ========== 获取真实线路数据 ==========
+        let routesData = [];
+        try {
+          const resp = await fetch(API_BASE + '/map/real-routes');
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data.routes && data.routes.length > 0) {
+              routesData = data.routes;
+              console.log('[地图] 已加载 ' + data.routes.length + ' 条真实线路');
+            }
+          }
+        } catch (e) {
+          console.log('[地图] 真实线路API失败，使用内置数据');
+        }
 
-        // 尝试获取 OSM 真实站点（用于补充背景展示）
+        // 如果没有真实数据，使用 fallback
+        if (routesData.length === 0) {
+          routesData = FALLBACK_ROUTES;
+        }
+
+        const allPoints = [];
+
+        // ========== 绘制每条线路 ==========
+        routesData.forEach((route, routeIdx) => {
+          const stops = route.stops;
+          const points = stops.map(s => [s.lat, s.lng]);
+          allPoints.push(...points);
+
+          // 线路折线
+          const lineOpt = {
+            color: route.color || (routeIdx === 0 ? '#409EFF' : '#67C23A'),
+            weight: 5,
+            opacity: 0.9,
+            lineJoin: 'round',
+          };
+          if (route.dash) lineOpt.dashArray = '8,6';
+          L.polyline(points, lineOpt).addTo(leafletMap);
+
+          // 站点标记
+          stops.forEach((s, idx) => {
+            const maxFlow = Math.max(...stops.map(x => x.flow || 3000));
+            const radius = 6 + ((s.flow || 3000) / maxFlow) * 10;
+            const isStart = idx === 0;
+            const isEnd = idx === stops.length - 1;
+
+            L.circleMarker([s.lat, s.lng], {
+              radius: radius,
+              color: '#fff',
+              weight: 2,
+              fillColor: isStart ? '#E6A23C' : (isEnd ? '#F56C6C' : (route.color || '#409EFF')),
+              fillOpacity: 0.85,
+            }).addTo(leafletMap).bindPopup(
+              '<div style="min-width:140px">' +
+              '<b style="font-size:14px">' + (s.name || ('站点' + s.id)) + '</b><br>' +
+              '<hr style="margin:6px 0">' +
+              '📍 序号：S' + (idx + 1) + '<br>' +
+              '👥 日均客流：<b>' + (s.flow || '?').toLocaleString() + '</b> 人次<br>' +
+              '🚌 线路：' + (route.route_name || route.route_ref || '') +
+              (isStart ? '<br>🚩 起点站' : '') +
+              (isEnd ? '<br>🏁 终点站' : '') +
+              '</div>'
+            );
+
+            // 站点名称标签
+            const offsetX = idx % 2 === 0 ? 18 : -18;
+            const offsetY = idx % 3 === 0 ? -12 : 12;
+            L.marker([s.lat, s.lng], {
+              icon: L.divIcon({
+                className: 'stop-label',
+                html: '<div style="' +
+                  'background:rgba(255,255,255,0.92);' +
+                  'padding:2px 8px;' +
+                  'border-radius:4px;' +
+                  'font-size:11px;' +
+                  'font-weight:bold;' +
+                  'color:#333;' +
+                  'white-space:nowrap;' +
+                  'border:1px solid ' + (isStart ? '#E6A23C' : (isEnd ? '#F56C6C' : (route.color || '#409EFF'))) + ';' +
+                  'box-shadow:0 1px 3px rgba(0,0,0,0.15)' +
+                  '">' +
+                  (idx + 1) + '. ' + (s.name || ('站点' + s.id)) +
+                  (isStart ? ' 🚩' : '') +
+                  (isEnd ? ' 🏁' : '') +
+                  '</div>',
+                iconSize: [0, 0],
+                iconAnchor: [offsetX, offsetY],
+              }),
+              interactive: false,
+            }).addTo(leafletMap);
+          });
+        });
+
+        // ========== OSM 真实站点（半透明背景层）==========
         try {
           const resp = await fetch(API_BASE + '/map/stops?limit=200');
           if (resp.ok) {
             const data = await resp.json();
             if (data.stops && data.stops.length > 0) {
-              osmStopsRaw = data.stops;
-              useRealData = true;
-              console.log('[地图] 已加载 ' + data.count + ' 个真实公交站点');
+              // 过滤掉与已知线路太近的点
+              const knownCoords = new Set(
+                allPoints.map(p => Math.round(p[0] * 1000) + ',' + Math.round(p[1] * 1000))
+              );
+              const backgroundStops = data.stops.filter(s => {
+                const key = Math.round(s.lat * 1000) + ',' + Math.round(s.lng * 1000);
+                return !knownCoords.has(key);
+              }).slice(0, 50);
+
+              backgroundStops.forEach(s => {
+                L.circleMarker([s.lat, s.lng], {
+                  radius: 3,
+                  color: 'transparent',
+                  fillColor: '#999',
+                  fillOpacity: 0.25,
+                }).addTo(leafletMap).bindPopup(
+                  '<b>' + (s.name || ('站点' + s.id)) + '</b><br>OSM 数据'
+                );
+              });
             }
           }
-        } catch (e) {
-          console.log('[地图] OSM 数据获取失败，使用内置线路数据');
-        }
-
-        // ========== 绘制主线路（沈阳1路）==========
-        const mainStops = SHENYANG_ROUTES.stops;
-        const mainPoints = mainStops.map(s => [s.lat, s.lng]);
-
-        // 主线路折线（带阴影效果）
-        L.polyline(mainPoints, {
-          color: SHENYANG_ROUTES.color,
-          weight: 5,
-          opacity: 0.9,
-          lineJoin: 'round',
-        }).addTo(leafletMap);
-
-        // 主线路方向箭头（每段中间加箭头标记）
-        for (let i = 0; i < mainPoints.length - 1; i++) {
-          const midLat = (mainPoints[i][0] + mainPoints[i + 1][0]) / 2;
-          const midLng = (mainPoints[i][1] + mainPoints[i + 1][1]) / 2;
-          L.marker([midLat, midLng], {
-            icon: L.divIcon({
-              className: 'arrow-icon',
-              html: '<span style="color:#409EFF;font-size:14px;font-weight:bold">▶</span>',
-              iconSize: [16, 16],
-              iconAnchor: [8, 8],
-            }),
-            interactive: false,
-          }).addTo(leafletMap);
-        }
-
-        // 主线路站点标记（带名称标签）
-        mainStops.forEach((s, idx) => {
-          // 根据客流量决定大小和颜色
-          const maxFlow = Math.max(...mainStops.map(x => x.flow));
-          const radius = 6 + (s.flow / maxFlow) * 10;
-
-          // 站点圆圈
-          L.circleMarker([s.lat, s.lng], {
-            radius: radius,
-            color: '#fff',
-            weight: 2,
-            fillColor: idx === 0 ? '#E6A23C' : (idx === mainStops.length - 1 ? '#F56C6C' : '#409EFF'),
-            fillOpacity: 0.85,
-          }).addTo(leafletMap).bindPopup(
-            '<div style="min-width:140px">' +
-            '<b style="font-size:14px">' + s.name + '</b><br>' +
-            '<hr style="margin:6px 0">' +
-            '📍 序号：S' + (idx + 1) + '<br>' +
-            '👥 日均客流：<b>' + s.flow.toLocaleString() + '</b> 人次<br>' +
-            (idx === 0 ? '🚩 起点站' : (idx === mainStops.length - 1 ? '🏁 终点站' : '🚌 途经站')) +
-            '</div>'
-          );
-
-          // 站点名称标签（永久显示在旁边）
-          const offsetX = idx % 2 === 0 ? 18 : -18;
-          const offsetY = idx % 3 === 0 ? -12 : 12;
-          L.marker([s.lat, s.lng], {
-            icon: L.divIcon({
-              className: 'stop-label',
-              html: '<div style="' +
-                'background:rgba(255,255,255,0.92);' +
-                'padding:2px 8px;' +
-                'border-radius:4px;' +
-                'font-size:11px;' +
-                'font-weight:bold;' +
-                'color:#333;' +
-                'white-space:nowrap;' +
-                'border:1px solid ' + (idx === 0 ? '#E6A23C' : (idx === mainStops.length - 1 ? '#F56C6C' : '#409EFF')) + ';' +
-                'box-shadow:0 1px 3px rgba(0,0,0,0.15)' +
-                '">' +
-                (idx + 1) + '. ' + s.name +
-                (idx === 0 ? ' 🚩' : '') +
-                (idx === mainStops.length - 1 ? ' 🏁' : '') +
-                '</div>',
-              iconSize: [0, 0],
-              iconAnchor: [offsetX, offsetY],
-            }),
-            interactive: false,
-          }).addTo(leafletMap);
-        });
-
-        // ========== 绘制第二条线路（沈阳2路）==========
-        const route2 = SHENYANG_ROUTES.route2;
-        const r2Points = route2.stops.map(s => [s.lat, s.lng]);
-
-        L.polyline(r2Points, {
-          color: route2.color,
-          weight: 4,
-          opacity: 0.7,
-          dashArray: '8, 6',  // 虚线区分
-        }).addTo(leafletMap);
-
-        route2.stops.forEach((s, idx) => {
-          L.circleMarker([s.lat, s.lng], {
-            radius: 5 + (s.flow / 5000) * 8,
-            color: '#fff',
-            weight: 1.5,
-            fillColor: route2.color,
-            fillOpacity: 0.7,
-          }).addTo(leafletMap).bindPopup(
-            '<b>' + s.name + '</b><br>日均客流：' + s.flow + ' 人次<br>线路：' + route2.name
-          );
-        });
-
-        // ========== OSM 真实站点（半透明背景层）==========
-        if (useRealData && osmStopsRaw.length > 0) {
-          // 过滤掉与已知线路太近的点，避免重复
-          const knownCoords = new Set(
-            [...SHENYANG_ROUTES.stops, ...route2.stops].map(s =>
-              Math.round(s.lat * 1000) + ',' + Math.round(s.lng * 1000)
-            )
-          );
-          const backgroundStops = osmStopsRaw.filter(s => {
-            const key = Math.round(s.lat * 1000) + ',' + Math.round(s.lng * 1000);
-            return !knownCoords.has(key);
-          }).slice(0, 50);  // 最多50个背景点
-
-          backgroundStops.forEach(s => {
-            L.circleMarker([s.lat, s.lng], {
-              radius: 3,
-              color: 'transparent',
-              fillColor: '#999',
-              fillOpacity: 0.25,
-            }).addTo(leafletMap).bindPopup(
-              '<b>' + (s.name || ('站点' + s.id)) + '</b><br>OSM 数据'
-            );
-          });
-        }
+        } catch (e) {}
 
         // ========== 自适应视图 ==========
-        const allPoints = [...mainPoints, ...r2Points];
-        leafletMap.fitBounds(L.latLngBounds(allPoints).pad(0.15));
+        if (allPoints.length > 0) {
+          leafletMap.fitBounds(L.latLngBounds(allPoints).pad(0.15));
+        }
 
-        // 更新图表数据
-        routeInfoData.value = {
-          names: mainStops.map(s => s.name),
-          flows: mainStops.map(s => s.flow),
-        };
+        // 更新图表数据（用第一条线路的站点）
+        if (routesData.length > 0 && routesData[0].stops) {
+          routeInfoData.value = {
+            names: routesData[0].stops.map(s => s.name || ('站点' + s.id)),
+            flows: routesData[0].stops.map(s => s.flow || 3000),
+          };
+        }
       });
     }
 
