@@ -190,8 +190,9 @@ def _load_optimization_result():
     except Exception as e:
         print(f"[优化] 加载结果失败：{e}")
 
-# 启动时自动加载
-_load_optimization_result()
+# 启动时不再自动加载旧缓存（避免返回过时的优化结果）
+# _load_optimization_result()
+print("[优化] 已禁用自动加载缓存，每次优化都将运行新计算")
 
 
 def get_scheduler():
