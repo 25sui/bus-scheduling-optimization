@@ -762,22 +762,32 @@ const app = createApp({
           });
         }
 
-        // 发车频率图（真实数据）
+        // 发车频率图（真实数据）—— 分组柱状图
         const freqEl = simFreq.value;
         if (freqEl && baseline && optimized) {
           try { echarts.dispose(freqEl); } catch(e) {}
           const c = initChart(freqEl);
+          // 8 个时段标签（每 2 个 30min 时段合并为 1 小时）
           const hrs = ['5-6','6-7','7-8','8-9','9-10','10-11','11-12','12-13'];
-          const baseFreq = baseline.map(hw => Math.round(60 / hw));
-          const optFreq = optimized.map(hw => Math.round(60 / hw));
+          // baseline 和 optimized 各 32 个时段（每 30min），合并为 8 个点（每小时）
+          const baseFreq = [];
+          const optFreq = [];
+          for (let i = 0; i < 32; i += 4) {
+            // 每 2 个小时段合并：发车间隔取平均，再算频率
+            const bAvg = (baseline[i] + baseline[i+1] + baseline[i+2] + baseline[i+3]) / 4;
+            const oAvg = (optimized[i] + optimized[i+1] + optimized[i+2] + optimized[i+3]) / 4;
+            baseFreq.push(Math.round(60 / Math.max(bAvg, 1)));
+            optFreq.push(Math.round(60 / Math.max(oAvg, 1)));
+          }
           c.setOption({
             tooltip: { trigger: 'axis' },
-            grid: { left: 50, right: 20, top: 10, bottom: 30 },
+            legend: { data: ['固定排班', '智能优化'], top: 0 },
+            grid: { left: 50, right: 20, top: 30, bottom: 30 },
             xAxis: { type: 'category', data: hrs },
             yAxis: { type: 'value', name: '趟/小时' },
             series: [
-              { name: '固定排班', type: 'bar', stack: 'base', data: baseFreq, itemStyle: { color: '#e0e0e0' } },
-              { name: '智能优化', type: 'bar', stack: 'opt', data: optFreq, itemStyle: { color: '#67C23A' } }
+              { name: '固定排班', type: 'bar', barWidth: '28%', data: baseFreq, itemStyle: { color: '#909399' } },
+              { name: '智能优化', type: 'bar', barWidth: '28%', data: optFreq, itemStyle: { color: '#67C23A' } }
             ]
           });
         }
