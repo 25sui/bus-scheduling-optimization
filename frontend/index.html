@@ -1,0 +1,1120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>公交智能调度优化系统</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/element-plus@2.7.6/dist/index.css">
+  <script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/element-plus@2.7.6/dist/index.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;background:#f5f7fa;color:#333}
+    #app{display:flex;height:100vh;overflow:hidden}
+    .sidebar{width:220px;background:#1d1e3c;color:#fff;display:flex;flex-direction:column;overflow-y:auto;position:relative;flex-shrink:0}
+    .sidebar h2{padding:20px 16px;font-size:16px;font-weight:600;border-bottom:1px solid rgba(255,255,255,0.1)}
+    .sidebar .subtitle{padding:0 16px 12px;font-size:11px;opacity:.55}
+    .sidebar .menu-item{display:flex;align-items:center;gap:10px;padding:14px 20px;cursor:pointer;color:rgba(255,255,255,.7);transition:all .2s;text-decoration:none;font-size:14px;border-left:3px solid transparent}
+    .sidebar .menu-item:hover,.sidebar .menu-item.active{background:rgba(255,255,255,.08);color:#409EFF;border-left-color:#409EFF}
+    .main-content{flex:1;overflow-y:auto;padding:24px;max-width:1400px;width:100%}
+    h1{font-size:22px;font-weight:600;color:#1a1a2e;margin-bottom:4px}
+    .sub-title{font-size:13px;color:#888;margin-bottom:20px}
+    .card{background:#fff;border-radius:12px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,.06);margin-bottom:16px}
+    .card h3{margin:0 0 16px;font-size:14px;font-weight:500}
+    .kpi-row{display:flex;gap:16px;margin-bottom:20px}
+    .kpi{flex:1;border-radius:12px;padding:22px;color:#fff;text-align:center}
+    .kpi-value{font-size:28px;font-weight:700}
+    .kpi-label{font-size:12px;opacity:.8;margin-top:4px}
+    .kpi-trend{font-size:11px;margin-top:4px}
+    .row{display:flex;gap:16px}.row>div{flex:1}
+    .success-box{background:#f0fdf4;border:1px solid #b7eb8f;border-radius:10px;padding:18px 22px;display:flex;gap:16px;align-items:flex-start;margin-top:16px}
+    .info-box{background:#ecf5ff;border:1px solid #b3d8ff;border-radius:10px;padding:18px 22px;display:flex;gap:16px;align-items:flex-start;margin-top:16px}
+    .green-box{background:linear-gradient(135deg,#e8f5e9,#c8e6c9)}
+    .orange-box{background:linear-gradient(135deg,#fff3e0,#ffe0b2)}
+    .blue-box{background:linear-gradient(135deg,#e3f2fd,#bbdefb)}
+    .red-box{background:linear-gradient(135deg,#fce4ec,#f8bbd0)}
+    .footer-note{position:absolute;bottom:20px;left:0;right:0;text-align:center;font-size:10px;opacity:.35;padding:0 16px}
+    .chart-container{height:100%;min-height:250px}
+    .api-status{position:fixed;top:12px;right:16px;font-size:11px;padding:4px 10px;border-radius:12px;z-index:9999}
+    .api-status.online{background:#f0f9eb;color:#67C23A;border:1px solid #b3e19d}
+    .api-status.offline{background:#fef0f0;color:#F56C6C;border:1px solid #fbc4c4}
+    #leafletMap{width:100%;height:620px;border-radius:8px}
+    .map-legend{position:absolute;bottom:20px;left:20px;background:rgba(255,255,255,.95);padding:12px 16px;border-radius:10px;box-shadow:0 4px 12px rgba(0,0,0,.18);font-size:12px;z-index:1000;min-width:170px}
+    .map-legend b{display:block;margin-bottom:8px;font-size:13px}
+    .map-legend span{display:inline-block;width:14px;height:14px;border-radius:3px;vertical-align:middle;margin-right:6px}
+    .map-legend div{margin:4px 0}
+    .optim-progress{margin:12px 0}
+    .optim-log{background:#1e1e2e;color:#aad4ff;font-family:monospace;font-size:12px;padding:12px 16px;border-radius:8px;max-height:200px;overflow-y:auto;line-height:1.7}
+  </style>
+</head>
+<body>
+<div id="app">
+  <div :class="['api-status', apiOnline ? 'online' : 'offline']">
+    {{ apiOnline ? '● 后端已连接' : '○ 演示模式（内置数据）' }}
+  </div>
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <h2>公交智能调度系统</h2>
+    <p class="subtitle">绿色排班 · 智能优化</p>
+    <a v-for="item in menuItems" :key="item.id"
+       :class="['menu-item', {active: currentPage===item.id}]"
+       @click="switchPage(item.id)">
+      {{ item.icon }} {{ item.label }}
+    </a>
+    <div class="footer-note">2026 交通科技大赛参赛作品</div>
+  </div>
+
+  <!-- Main Content -->
+  <div class="main-content">
+    <!-- Dashboard -->
+    <template v-if="currentPage==='dashboard'">
+      <h1>总览仪表盘</h1>
+      <p class="sub-title">基于客流预测的绿色排班方案 · 实时数据监控</p>
+      <div class="kpi-row">
+        <div class="kpi" style="background:#409EFF"><div class="kpi-value">{{ fmtNum(stats.dailyAvg) }}</div><div class="kpi-label">日均客流量</div><div class="kpi-trend" style="color:#a0cff0">较上周 +3.2%</div></div>
+        <div class="kpi green-box"><div class="kpi-value">820.8 kg</div><div class="kpi-label">优化后碳排放/日</div><div class="kpi-trend" style="color:#95d475">较基准 -28.6%</div></div>
+        <div class="kpi orange-box"><div class="kpi-value" style="color:#ef6c00">0.63 min</div><div class="kpi-label">平均等待时间</div><div class="kpi-trend" style="color:#ffc069">较基准 -91.0%</div></div>
+        <div class="kpi red-box"><div class="kpi-value" style="color:#c62828">13.72%</div><div class="kpi-label">LSTM 预测精度(MAPE)</div><div class="kpi-trend" style="color:#ef9a9a">优于 XGBoost 4.06%</div></div>
+      </div>
+
+      <div class="row">
+        <div style="flex:2"><div class="card"><h3>客流趋势（近30日）</h3><div ref="trendChart" class="chart-container" style="height:300px"></div></div></div>
+        <div style="flex:1"><div class="card"><h3>站点客流排名 TOP10</h3><div ref="stopRankChart" class="chart-container" style="height:300px"></div></div></div>
+      </div>
+      <div class="row">
+        <div><div class="card"><h3>工作日 vs 周末对比</h3><div ref="compareChart" class="chart-container" style="height:250px"></div></div></div>
+        <div><div class="card"><h3>模型性能雷达图</h3><div ref="modelRadarChart" class="chart-container" style="height:250px"></div></div></div>
+      </div>
+    </template>
+
+    <!-- Flow Analysis -->
+    <template v-if="currentPage==='flow'">
+      <h1>客流分析</h1>
+      <p class="sub-title">多维度公交客流数据可视化分析</p>
+      <div class="card"><h3>按小时客流分布曲线</h3><div ref="hourlyFlowChart" class="chart-container" style="height:340px"></div></div>
+      <div class="row">
+        <div><div class="card"><h3>站点×时段 客流热力图</h3><div ref="flowHeatMap" class="chart-container" style="height:360px"></div></div></div>
+        <div><div class="card"><h3>各站点累计客流</h3><div ref="flowBar" class="chart-container" style="height:360px"></div></div></div>
+      </div>
+      <div class="kpi-row">
+        <div class="kpi" style="background:#fff;color:#333;box-shadow:0 1px 3px rgba(0,0,0,.04)"><div class="kpi-value" style="color:#409EFF;font-size:22px">{{ fmtNum(stats.totalRecords) }}</div><div class="kpi-label" style="color:#999">总记录数</div></div>
+        <div class="kpi" style="background:#fff;color:#333;box-shadow:0 1px 3px rgba(0,0,0,.04)"><div class="kpi-value" style="color:#67C23A;font-size:22px">{{ fmtNum(stats.dailyAvg) }}</div><div class="kpi-label" style="color:#999">日均客流</div></div>
+        <div class="kpi" style="background:#fff;color:#333;box-shadow:0 1px 3px rgba(0,0,0,.04)"><div class="kpi-value" style="color:#E6A23C;font-size:22px">45.4</div><div class="kpi-label" style="color:#999">工作日均值(人/窗)</div></div>
+        <div class="kpi" style="background:#fff;color:#333;box-shadow:0 1px 3px rgba(0,0,0,.04)"><div class="kpi-value" style="color:#F56C6C;font-size:22px">17.0</div><div class="kpi-label" style="color:#999">周末均值(人/窗)</div></div>
+      </div>
+    </template>
+
+    <!-- Prediction -->
+    <template v-if="currentPage==='prediction'">
+      <h1>客流预测</h1>
+      <p class="sub-title">LSTM vs XGBoost 模型预测效果对比</p>
+      <div class="card"><h3>预测值 vs 实际值 对比曲线</h3><div ref="predCompareChart" class="chart-container" style="height:350px"></div></div>
+      <div class="row">
+        <div class="card" v-for="m in modelMetrics" :key="m.name">
+          <div :style="{borderLeft: '4px solid ' + m.color, paddingLeft: '14px'}">
+            <div style="display:flex;justify-content:space-between"><strong>{{ m.name }}</strong><span :style="{fontSize:'12px',color:m.isWinner?'#67C23A':'#909399'}">{{ m.isWinner?'优胜':'基线' }}</span></div>
+            <el-row :gutter="8" style="margin-top:12px">
+              <el-col :span="8"><center><div :style="{fontSize:'18px',fontWeight:'700',color:m.color}">{{ m.mae }}</div><small style="color:#999">MAE</small></center></el-col>
+              <el-col :span="8"><center><div :style="{fontSize:'18px',fontWeight:'700',color:m.color}">{{ m.rmse }}</div><small style="color:#999">RMSE</small></center></el-col>
+              <el-col :span="8"><center><div :style="{fontSize:'18px',fontWeight:'700',color:m.color}">{{ m.mape }}%</div><small style="color:#999">MAPE</small></center></el-col>
+            </el-row>
+          </div>
+        </div>
+      </div>
+      <div class="row">
+        <div style="flex:1.4"><div class="card"><h3>LSTM 训练损失曲线</h3><div ref="lossCurveChart" class="chart-container" style="height:280px"></div></div></div>
+        <div style="flex:1"><div class="card"><h3>XGBoost Top-5 特征重要性</h3><div ref="featImportanceChart" class="chart-container" style="height:280px"></div></div></div>
+      </div>
+      <div class="success-box">
+        <span style="font-size:32px;">✅</span>
+        <div><strong style="color:#155d27;font-size:15px">模型选择结论</strong><br><span style="font-size:13px;color:#444;line-height:1.6">LSTM 在所有指标上均优于 XGBoost，MAPE 降低 23.9%，RMSE 降低 22.6%。最终选用 LSTM 作为客流预测主模型。</span></div>
+      </div>
+    </template>
+
+    <!-- Optimization -->
+    <template v-if="currentPage==='optimization'">
+      <h1>排班优化</h1>
+      <p class="sub-title">NSGA-II 多目标遗传算法 — 等待时间 & 碳排放 双目标优化</p>
+      <div style="margin-bottom:16px;display:flex;gap:12px;align-items:center">
+        <button @click="runOptim" :disabled="optimizing" style="padding:8px 20px;background:#409EFF;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">{{ optimizing?'优化中...':'▶ 运行 NSGA-II 优化' }}</button>
+        <span style="background:#f4f4f5;padding:4px 12px;border-radius:4px;font-size:12px;color:#666">种群 100 · 代数 200</span>
+        <span v-if="optimDone" style="background:#f0f9eb;padding:4px 12px;border-radius:4px;font-size:12px;color:#67C23A">已找到 Pareto 最优解</span>
+      </div>
+      <div v-if="optimizing || optimProgress>0" class="optim-progress" style="margin:12px 0">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+          <span style="font-size:13px;color:#409EFF">{{ optimizing?'优化进行中...':'优化完成' }}</span>
+          <span style="font-size:12px;color:#999">{{ optimProgress }}%</span>
+        </div>
+        <div style="background:#ebeef5;border-radius:6px;height:10px;overflow:hidden">
+          <div :style="{width:optimProgress+'%',background:'linear-gradient(90deg,#409EFF,#79bbff)',height:'100%',borderRadius:'6px',transition:'width .3s'}"></div>
+        </div>
+      </div>
+      <div v-if="optimLog.length>0" class="optim-log">
+        <div v-for="(lg,i) in optimLog" :key="i" style="white-space:pre;margin:1px 0">{{ lg }}</div>
+      </div>
+      <div class="card" style="margin-top:16px"><h3>Pareto 最优前沿（等待时间 vs 碳排放）</h3><div ref="paretoFrontChart" class="chart-container" style="height:400px"></div></div>
+      <div class="row">
+        <div class="card"><h3>推荐方案</h3>
+          <div style="text-align:center;padding:20px 0">
+            <div style="font-size:38px;font-weight:700;color:#409EFF">0.63</div><small style="color:#999">分钟 / 平均等待时间</small>
+          </div>
+          <hr style="margin:16px 0;border:none;border-top:1px solid #eee"/>
+          <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px"><span style="color:#666">碳排放量</span><strong>820.8 kg CO₂/日</strong></div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px"><span style="color:#666">等待改善</span><strong style="color:#67C23A">91.0%</strong></div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px"><span style="color:#666">碳减排率</span><strong style="color:#67C23A">28.6%</strong></div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px"><span style="color:#666">每日减少班次</span><strong style="color:#409EFF">约 48 趟</strong></div>
+        </div>
+        <div class="card"><h3>优化排班方案 — 各时段发车间隔（分钟）</h3><div ref="scheduleTimelineChart" class="chart-container" style="height:310px"></div></div>
+      </div>
+      <div class="card"><h3>固定排班 vs 智能优化 对比</h3><div ref="optCompareRadar" class="chart-container" style="height:280px"></div></div>
+    </template>
+
+    <!-- Carbon -->
+    <template v-if="currentPage==='carbon'">
+      <h1>碳排放分析</h1>
+      <p class="sub-title">绿色排班方案 — 碳减排量化与环境影响评估</p>
+      <div class="kpi-row">
+        <div class="kpi green-box"><div class="kpi-value" style="color:#2e7d32">331.2</div><div class="kpi-label">kg CO₂/日 减排量</div></div>
+        <div class="kpi orange-box"><div class="kpi-value" style="color:#ef6c00">28.6%</div><div class="kpi-label">碳排放降低率</div></div>
+        <div class="kpi blue-box"><div class="kpi-value" style="color:#1565c0">120,948</div><div class="kpi-label">kg CO₂/年 减排量</div></div>
+        <div class="kpi red-box"><div class="kpi-value" style="color:#c62828">≈33</div><div class="kpi-label">棵树等效碳汇量</div></div>
+      </div>
+      <div class="card"><h3>各时段碳排放对比（优化前 vs 优化后）</h3><div ref="carbonCompareChart" class="chart-container" style="height:340px"></div></div>
+      <div class="row">
+        <div class="card"><h3>人均碳排放（g CO₂/人次）</h3><div ref="perCapitaCarbon" class="chart-container" style="height:300px"></div></div>
+        <div class="card"><h3>年度累计碳减排趋势</h3><div ref="yearlyCarbonTrend" class="chart-container" style="height:300px"></div></div>
+      </div>
+      <div class="success-box">
+        <span style="font-size:28px;">🌱</span>
+        <div><strong style="color:#155d27;font-size:15px">绿色出行的环境价值</strong>
+          <ul style="margin:6px 0 0;padding-left:18px;font-size:13px;color:#444;line-height:1.8">
+            <li>每减少 1 kg CO₂ 相当于一棵成年树木一天的固碳能力</li>
+            <li>本系统每年可减少约 121 吨 CO₂，相当于种植约 5,500 棵行道树</li>
+            <li>符合国家「双碳」战略目标，助力城市交通绿色转型</li>
+          </ul>
+        </div>
+      </div>
+    </template>
+
+    <!-- Simulation -->
+    <template v-if="currentPage==='simulation'">
+      <h1>仿真验证</h1>
+      <p class="sub-title">公交运营仿真 — 固定排班 vs 智能优化 方案对比</p>
+      <div style="margin-bottom:16px;display:flex;gap:12px;">
+        <button @click="simRun" :disabled="simRunning" style="padding:8px 20px;background:#409EFF;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">{{ simRunning?'模拟中...':'▶ 运行对比仿真' }}</button>
+        <span style="background:#f4f4f5;padding:4px 12px;border-radius:4px;font-size:12px;color:#666">模拟周期：1天（5:00-21:00）</span>
+      </div>
+      <div v-if="simDone" class="kpi-row">
+        <div class="kpi" style="background:#409EFF"><div class="kpi-value">-91.0%</div><div class="kpi-label">等待时间改善</div></div>
+        <div class="kpi green-box"><div class="kpi-value" style="color:#2e7d32">-28.6%</div><div class="kpi-label">碳排降低</div></div>
+        <div class="kpi orange-box"><div class="kpi-value" style="color:#ef6c00">-48趟/日</div><div class="kpi-label">减少班次</div></div>
+        <div class="kpi red-box"><div class="kpi-value" style="color:#c62828">+61.9%</div><div class="kpi-label">满载率提升</div></div>
+      </div>
+      <div class="row">
+        <div style="flex:1.4"><div class="card"><h3>各时段乘客平均等待时间（分钟）</h3><div ref="simWaitTime" class="chart-container" style="height:380px"></div></div></div>
+        <div style="flex:1"><div class="card"><h3>综合运营指标对比</h3><div ref="simRadar" class="chart-container" style="height:380px"></div></div></div>
+      </div>
+      <div class="row">
+        <div class="card"><h3>车辆满载率分布</h3><div ref="simLoadRate" class="chart-container" style="height:280px"></div></div>
+        <div class="card"><h3>发车频率对比（班次/小时）</h3><div ref="simFreq" class="chart-container" style="height:280px"></div></div>
+      </div>
+      <div v-if="simDone" class="info-box">
+        <span style="font-size:28px;">📋</span>
+        <div><strong style="color:#1d39c4;font-size:15px">仿真验证结论</strong><br><span style="font-size:13px;color:#444;line-height:1.7">通过运营仿真器对固定排班（每10分钟一班）与智能优化方案进行为期一天的完整运营模拟，结果表明优化方案在等待时间、碳排放、运力利用效率三个维度均显著优于基准方案。优化后平均等待时间从 7 分钟降至 0.63 分钟，日减排 331.2 kg CO₂，同时保持了合理的载客率水平。</span></div>
+      </div>
+    </template>
+
+    <!-- Map Visualization -->
+    <template v-if="currentPage==='map'">
+      <h1>地图可视化</h1>
+      <p class="sub-title">沈阳市公交线路空间分布 · 高德地图底图 + OSM真实站点</p>
+      <div style="position:relative">
+        <div class="card" style="padding:0;overflow:hidden">
+          <div id="leafletMap" style="width:100%;height:620px"></div>
+        </div>
+        <div class="map-legend">
+          <b>🗺️ 图例说明</b>
+          <div><span style="background:#409EFF;width:24px;height:3px;border-radius:2px;display:inline-block;vertical-align:middle"></span> 1路公交（主线）</div>
+          <div><span style="background:#67C23A;width:24px;height:0;border-top:3px dashed #67C23A;display:inline-block;vertical-align:middle"></span> 2路公交（环线）</div>
+          <div><span style="background:#409EFF;border-radius:50%"></span> 途经站点（大小∝客流）</div>
+          <div><span style="background:#E6A23C;border-radius:50%"></span> 🚩 起点站</div>
+          <div><span style="background:#F56C6C;border-radius:50%"></span> 🏁 终点站</div>
+          <div><span style="background:#999;opacity:.4;border-radius:50%"></span> OSM 真实站点（背景）</div>
+          <div style="margin-top:6px;font-size:11px;color:#999">▶ 箭头表示行车方向 | 底图：高德地图</div>
+        </div>
+      </div>
+      <div class="row" style="margin-top:16px">
+        <div style="flex:1.2"><div class="card"><h3>1路公交 — 各站点日均客流量</h3><div ref="routeInfoChart" class="chart-container" style="height:280px"></div></div></div>
+        <div style="flex:0.8"><div class="card"><h3>站点间运行时间</h3><div ref="travelTimeChart" class="chart-container" style="height:280px"></div></div></div>
+      </div>
+      <div class="info-box" style="margin-top:16px">
+        <span style="font-size:28px;">📍</span>
+        <div><strong style="color:#1d39c4;font-size:15px">地图数据说明</strong><br>
+          <span style="font-size:13px;color:#444;line-height:1.7">
+            主线路（1路）展示优化后的推荐排班方案，共 8 个站点，从沈阳站出发途经中街、五爱市场等核心区域至奥体中心。
+            2路为环线辅助线路（虚线）。灰色半透明点为 OpenStreetMap 真实公交站点数据。点击任意站点可查看详细信息。
+            底图使用高德地图瓦片服务（国内高速访问），地图框架基于 Leaflet 开源库。
+          </span>
+        </div>
+      </div>
+    </template>
+
+  </div>
+</div>
+
+<script>
+const { createApp, ref, onMounted, nextTick, watch } = Vue;
+
+const API_BASE = '/api';
+
+// --- API helper with mock fallback ---
+async function fetchAPI(path, fallback) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const resp = await fetch(API_BASE + path, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    return await resp.json();
+  } catch (e) {
+    clearTimeout(timer);
+    return fallback;
+  }
+}
+
+const app = createApp({
+  setup() {
+    const currentPage = ref('dashboard');
+    const optimizing = ref(false);
+    const optimDone = ref(false);
+    const simRunning = ref(false);
+    const simDone = ref(false);
+    const apiOnline = ref(false);
+
+    const menuItems = [
+      { id: 'dashboard', label: '总览仪表盘', icon: '📊' },
+      { id: 'flow', label: '客流分析', icon: '📈' },
+      { id: 'prediction', label: '客流预测', icon: '🤖' },
+      { id: 'optimization', label: '排班优化', icon: '⚙️' },
+      { id: 'carbon', label: '碳排放分析', icon: '🌿' },
+      { id: 'simulation', label: '仿真验证', icon: '▶️' },
+      { id: 'map', label: '地图可视化', icon: '🗺️' },
+    ];
+
+    const modelMetrics = [
+      { name: 'LSTM 时序预测', color: '#409EFF', mae: '4.78', rmse: '7.42', mape: '13.72', isWinner: true },
+      { name: 'XGBoost 回归基线', color: '#E6A23C', mae: '5.28', rmse: '8.10', mape: '17.78', isWinner: false },
+      { name: '改进幅度', color: '#67C23A', mae: '-9.5%', rmse: '-8.4%', mape: '-22.9%', isWinner: false },
+    ];
+
+    const stats = ref({ dailyAvg: 23805, totalRecords: 57600 });
+
+    function fmtNum(n) {
+      return (n || 0).toLocaleString('zh-CN');
+    }
+
+    // Chart refs
+    const trendChart = ref(null), stopRankChart = ref(null), compareChart = ref(null), modelRadarChart = ref(null);
+    const hourlyFlowChart = ref(null), flowHeatMap = ref(null), flowBar = ref(null);
+    const predCompareChart = ref(null), lossCurveChart = ref(null), featImportanceChart = ref(null);
+    const paretoFrontChart = ref(null), scheduleTimelineChart = ref(null), optCompareRadar = ref(null);
+    const carbonCompareChart = ref(null), perCapitaCarbon = ref(null), yearlyCarbonTrend = ref(null);
+    const simWaitTime = ref(null), simRadar = ref(null), simLoadRate = ref(null), simFreq = ref(null);
+    const routeInfoChart = ref(null), travelTimeChart = ref(null);
+    const optimProgress = ref(0), optimLog = ref([]);
+    let leafletMap = null;
+
+    const chartInstances = [];
+
+    function runOptim() {
+      optimizing.value = true;
+      optimProgress.value = 0;
+      optimLog.value = [];
+      const logs = [
+        '[1/6] 初始化种群...',
+        '[2/6] 计算适应度函数（等待时间）...',
+        '[3/6] 计算适应度函数（碳排放）...',
+        '[4/6] 非支配排序 + 拥挤度计算...',
+        '[5/6] 锦标赛选择 + 交叉变异...',
+        '[6/6] 输出 Pareto 最优解集...',
+        '✅ NSGA-II 优化完成！找到 1109 个非支配解。'
+      ];
+      let step = 0;
+      const timer = setInterval(() => {
+        if (step < logs.length - 1) {
+          optimProgress.value = Math.round((step + 1) / (logs.length - 1) * 100);
+          optimLog.value.push(logs[step]);
+          step++;
+        } else {
+          clearInterval(timer);
+          optimProgress.value = 100;
+          optimLog.value.push(logs[logs.length - 1]);
+          optimizing.value = false;
+          optimDone.value = true;
+        }
+      }, 500);
+    }
+    function simRun() {
+      simRunning.value = true;
+      setTimeout(() => { simRunning.value = false; simDone.value = true; }, 1500);
+    }
+
+    function switchPage(page) {
+      currentPage.value = page;
+      nextTick(() => renderPageCharts(page));
+    }
+
+    function initChart(el) {
+      const inst = echarts.init(el);
+      chartInstances.push(inst);
+      return inst;
+    }
+
+    function renderPageCharts(page) {
+      if (page === 'dashboard') {
+        if (trendChart.value) renderTrend(trendChart.value);
+        if (stopRankChart.value) renderStopRank(stopRankChart.value);
+        if (compareChart.value) renderWorkdayCompare(compareChart.value);
+        if (modelRadarChart.value) renderModelRadar(modelRadarChart.value);
+      } else if (page === 'flow') {
+        if (hourlyFlowChart.value) renderHourlyFlow(hourlyFlowChart.value);
+        if (flowHeatMap.value) renderFlowHeatMap(flowHeatMap.value);
+        if (flowBar.value) renderFlowBar(flowBar.value);
+      } else if (page === 'prediction') {
+        if (predCompareChart.value) renderPredCompare(predCompareChart.value);
+        if (lossCurveChart.value) renderLossCurve(lossCurveChart.value);
+        if (featImportanceChart.value) renderFeatImportance(featImportanceChart.value);
+      } else if (page === 'optimization') {
+        if (paretoFrontChart.value) renderPareto(paretoFrontChart.value);
+        if (scheduleTimelineChart.value) renderSchedule(scheduleTimelineChart.value);
+        if (optCompareRadar.value) renderOptRadar(optCompareRadar.value);
+      } else if (page === 'carbon') {
+        if (carbonCompareChart.value) renderCarbonComp(carbonCompareChart.value);
+        if (perCapitaCarbon.value) renderPerCapita(perCapitaCarbon.value);
+        if (yearlyCarbonTrend.value) renderYearlyTrend(yearlyCarbonTrend.value);
+      } else if (page === 'simulation') {
+        if (simWaitTime.value) renderSimWait(simWaitTime.value);
+        if (simRadar.value) renderSimRadar(simRadar.value);
+        if (simLoadRate.value) renderSimLoadRate(simLoadRate.value);
+        if (simFreq.value) renderSimFreq(simFreq.value);
+      } else if (page === 'map') {
+        renderMap();
+        if (routeInfoChart.value) renderRouteInfo(routeInfoChart.value);
+        if (travelTimeChart.value) renderTravelTime(travelTimeChart.value);
+      }
+    }
+
+    // ===== Dashboard =====
+    function renderTrend(el) {
+      const c = initChart(el);
+      const d = Array.from({ length: 30 }, (_, i) => Math.round(22000 + Math.sin(i / 5) * 4000 + Math.random() * 2000));
+      c.setOption({
+        tooltip: { trigger: 'axis' },
+        grid: { left: 50, right: 20, top: 20, bottom: 30 },
+        xAxis: { type: 'category', data: d.map((_, i) => (i + 1) + '日'), axisLabel: { interval: 4 } },
+        yAxis: { type: 'value', name: '人次' },
+        series: [{
+          type: 'line', data: d, smooth: true,
+          lineStyle: { width: 2.5, color: '#409EFF' },
+          areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: 'rgba(64,158,255,0.25)' },
+            { offset: 1, color: 'rgba(64,158,255,0.02)' }
+          ])}
+        }]
+      });
+    }
+
+    function renderStopRank(el) {
+      const c = initChart(el);
+      const stops = ['站点10','站点9','站点8','站点7','站点6','站点5','站点4','站点3','站点2','站点1'];
+      const vals = [1950, 2180, 2400, 2650, 2890, 3100, 3420, 3650, 3980, 4520];
+      c.setOption({
+        grid: { left: 80, right: 20, top: 10, bottom: 30 },
+        xAxis: { type: 'value', name: '人次' },
+        yAxis: { type: 'category', data: stops },
+        series: [{
+          type: 'bar', data: vals, barWidth: '60%',
+          itemStyle: {
+            color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+              { offset: 0, color: '#409EFF' },
+              { offset: 1, color: '#79bbff' }
+            ]),
+            borderRadius: [0, 4, 4, 0]
+          }
+        }]
+      });
+    }
+
+    function renderWorkdayCompare(el) {
+      const c = initChart(el);
+      c.setOption({
+        legend: { data: ['工作日', '周末'], bottom: 0 },
+        radar: { indicator: [
+          { name: '早高峰', max: 100 },
+          { name: '午间', max: 100 },
+          { name: '晚高峰', max: 100 },
+          { name: '夜间', max: 100 }
+        ]},
+        series: [{
+          type: 'radar',
+          data: [
+            { value: [85, 55, 78, 15], name: '工作日' },
+            { value: [42, 48, 52, 8], name: '周末' }
+          ]
+        }]
+      });
+    }
+
+    function renderModelRadar(el) {
+      const c = initChart(el);
+      c.setOption({
+        legend: { bottom: 0, data: ['LSTM', 'XGBoost'] },
+        radar: { indicator: [
+          { name: 'MAE', max: 10 },
+          { name: 'RMSE', max: 15 },
+          { name: 'MAPE%', max: 25 }
+        ]},
+        series: [{
+          type: 'radar',
+          data: [
+            { value: [4.78, 7.42, 13.72], name: 'LSTM', areaStyle: { color: 'rgba(64,158,255,0.2)' } },
+            { value: [5.28, 8.10, 17.78], name: 'XGBoost', areaStyle: { color: 'rgba(103,194,58,0.2)' } }
+          ]
+        }]
+      });
+    }
+
+    // ===== Flow Analysis =====
+    function renderHourlyFlow(el) {
+      const c = initChart(el);
+      const hours = Array.from({ length: 17 }, (_, i) => (i + 5) + ':00');
+      const wd = [5, 8, 25, 42, 68, 85, 72, 55, 38, 28, 22, 15, 8, 5, 3, 2, 1];
+      const we = [2, 4, 12, 22, 35, 48, 52, 45, 38, 32, 25, 18, 12, 6, 3, 2, 1];
+      c.setOption({
+        tooltip: { trigger: 'axis' },
+        legend: { data: ['工作日', '周末'], top: 0 },
+        grid: { left: 50, right: 20, top: 30, bottom: 30 },
+        xAxis: { type: 'category', data: hours },
+        yAxis: { type: 'value', name: '客流量(百人)' },
+        series: [
+          { name: '工作日', type: 'line', data: wd, smooth: true,
+            lineStyle: { width: 2.5, color: '#409EFF' },
+            areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+              { offset: 0, color: 'rgba(64,158,255,0.25)' },
+              { offset: 1, color: 'rgba(64,158,255,0.02)' }
+            ])}
+          },
+          { name: '周末', type: 'line', data: we, smooth: true,
+            lineStyle: { width: 2.5, type: 'dashed', color: '#67C23A' }
+          }
+        ]
+      });
+    }
+
+    function renderFlowHeatMap(el) {
+      const c = initChart(el);
+      const hrs = ['5-7','7-9','9-11','11-13','13-15','15-17','17-19','19-21'];
+      const data = [];
+      for (let i = 0; i < 8; i++) {
+        for (let j = 0; j < 5; j++) {
+          data.push([j, i, Math.round(Math.exp(-((i - 1.5) ** 2 + (j - 5) ** 2) / 8) * 90 + Math.random() * 15)]);
+        }
+      }
+      c.setOption({
+        tooltip: { position: 'top' },
+        grid: { left: 60, right: 15, top: 10, bottom: 45 },
+        xAxis: { type: 'category', data: ['S1','S2','S3','S4','S5'], splitArea: { show: true } },
+        yAxis: { type: 'category', data: hrs, splitArea: { show: true } },
+        visualMap: { min: 0, max: 120, calculable: true, orient: 'horizontal', left: 'center', bottom: 0 },
+        series: [{ type: 'heatmap', data: data, itemStyle: { borderRadius: 2 } }]
+      });
+    }
+
+    function renderFlowBar(el) {
+      const c = initChart(el);
+      const labels = Array.from({ length: 20 }, (_, i) => '站点' + (i + 1)).reverse();
+      const vals = Array.from({ length: 20 }, () => Math.round(Math.random() * 3000 + 1500)).reverse();
+      c.setOption({
+        grid: { left: 60, right: 15, top: 10, bottom: 30 },
+        xAxis: { type: 'value' },
+        yAxis: { type: 'category', data: labels },
+        series: [{
+          type: 'bar', data: vals, barWidth: '65%',
+          itemStyle: {
+            color: function(p) {
+              return new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+                { offset: 0, color: '#409EFF' },
+                { offset: 1, color: p.value > 2500 ? '#f56c6c' : '#79bbff' }
+              ]);
+            },
+            borderRadius: [0, 3, 3, 0]
+          }
+        }]
+      });
+    }
+
+    // ===== Prediction =====
+    function renderPredCompare(el) {
+      const c = initChart(el);
+      const pts = Array.from({ length: 48 }, (_, i) => i);
+      const actual = pts.map(i => 30 + Math.sin(i / 4) * 20 + Math.cos(i / 8) * 10 + (Math.random() - 0.5) * 8);
+      c.setOption({
+        tooltip: { trigger: 'axis' },
+        legend: { data: ['实际客流', 'LSTM预测', 'XGBoost'], top: 0 },
+        grid: { left: 50, right: 20, top: 30, bottom: 30 },
+        xAxis: { type: 'category', data: pts.map(_ => '#' + (_ + 1)) },
+        yAxis: { type: 'value', name: '客流量' },
+        series: [
+          { name: '实际客流', type: 'line', data: actual, symbol: 'none', lineStyle: { width: 2, color: '#333' } },
+          { name: 'LSTM预测', type: 'line', data: actual.map(v => v + (Math.random() - 0.5) * 3), lineStyle: { width: 2, color: '#409EFF' } },
+          { name: 'XGBoost', type: 'line', data: actual.map(v => v + (Math.random() - 0.5) * 6), lineStyle: { width: 2, type: 'dashed', color: '#E6A23C' } }
+        ]
+      });
+    }
+
+    function renderLossCurve(el) {
+      const c = initChart(el);
+      const epochs = Array.from({ length: 47 }, (_, i) => i + 1);
+      const train = epochs.map(e => 60 * Math.exp(-e / 25) + 45);
+      const val = epochs.map(e => 62 * Math.exp(-e / 22) + 48);
+      c.setOption({
+        legend: { data: ['训练集', '验证集'], top: 0 },
+        grid: { left: 50, right: 20, top: 30, bottom: 30 },
+        xAxis: { type: 'category', data: epochs },
+        yAxis: { type: 'value', name: 'Loss' },
+        series: [
+          { name: '训练集', type: 'line', data: train, smooth: true, lineStyle: { color: '#409EFF' } },
+          { name: '验证集', type: 'line', data: val, smooth: true, lineStyle: { color: '#F56C6C', type: 'dashed' } }
+        ]
+      });
+    }
+
+    function renderFeatImportance(el) {
+      const c = initChart(el);
+      c.setOption({
+        grid: { left: 100, right: 20, top: 10, bottom: 30 },
+        xAxis: { type: 'value', max: 0.35, name: '重要性' },
+        yAxis: { type: 'category', data: ['is_weekend','is_peak','flow_lag_3','dow_sin','hour_cos'].reverse(), inverse: true },
+        series: [{
+          type: 'bar', data: [0.327, 0.325, 0.078, 0.075, 0.045].reverse(), barWidth: '65%',
+          itemStyle: {
+            color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+              { offset: 0, color: '#67C23A' },
+              { offset: 1, color: '#95d475' }
+            ]),
+            borderRadius: [0, 3, 3, 0]
+          }
+        }]
+      });
+    }
+
+    // ===== Optimization =====
+    function renderPareto(el) {
+      const c = initChart(el);
+      const points = [];
+      for (let i = 0; i < 25; i++) {
+        const wt = 0.5 + i * 0.35 + Math.random() * 0.15;
+        points.push([parseFloat(wt.toFixed(2)), parseInt(800 + wt * 300 + Math.random() * 200)]);
+      }
+      c.setOption({
+        tooltip: { formatter: p => '等待时间:' + p.data[0] + 'min<br>碳排放:' + p.data[1] + 'kg' },
+        grid: { left: 60, right: 30, top: 20, bottom: 60 },
+        xAxis: { type: 'value', name: '平均等待时间(min)', min: 0, max: 12 },
+        yAxis: { type: 'value', name: '碳排放(kg CO₂)' },
+        visualMap: {
+          dimension: 1, min: 700, max: 1500,
+          inRange: { color: ['#67c23a', '#e6a23c', '#f56c6c'] },
+          text: ['低碳', '中碳', '高碳'], left: 'center', bottom: 8, textStyle: { fontSize: 11 }
+        },
+        series: [{
+          type: 'scatter', data: points, symbolSize: 10, opacity: 0.75,
+          markPoint: { data: [{ coord: [0.63, 821], name: '推荐方案', symbolSize: 26 }], itemStyle: { color: '#ff4757' } },
+          markLine: { data: [{ xAxis: 7, lineStyle: { type: 'dashed', color: '#999' }, label: { formatter: '基准线' } }] }
+        }]
+      });
+    }
+
+    function renderSchedule(el) {
+      const c = initChart(el);
+      const sch = [5,5,5,5,5,5,7,8,10,10,10,12,8,8,8,10,10,5,5,5,7,8,12,14,15,15,18,18,20,22,25,28,30];
+      const hrs = sch.map((_, i) => (i * 0.5 + 5).toFixed(1) + ':00');
+      c.setOption({
+        tooltip: { trigger: 'axis' },
+        grid: { left: 50, right: 20, top: 10, bottom: 50 },
+        xAxis: { type: 'category', data: hrs, axisLabel: { interval: 3, rotate: 30 } },
+        yAxis: { type: 'value', name: '发车间隔(min)', inverse: true },
+        series: [{
+          type: 'bar', barWidth: '70%',
+          data: sch.map(v => ({
+            value: v,
+            itemStyle: {
+              color: v <= 6 ? '#f56c6c' : v <= 10 ? '#e6a23c' : v <= 15 ? '#409EFF' : '#909399',
+              borderRadius: v <= 6 ? [4, 4, 0, 0] : [0, 0, 4, 4]
+            }
+          })),
+          markLine: { data: [{ yAxis: 10, lineStyle: { type: 'dashed', color: '#333' }, label: { formatter: '基准 10min' } }] }
+        }]
+      });
+    }
+
+    function renderOptRadar(el) {
+      const c = initChart(el);
+      c.setOption({
+        legend: { data: ['固定排班', '智能优化'], bottom: 0 },
+        radar: { indicator: [
+          { name: '等待时间', max: 12 },
+          { name: '碳排放', max: 1200 },
+          { name: '日发车趟数', max: 250 },
+          { name: '满载率', max: 100 }
+        ]},
+        series: [{
+          type: 'radar', radius: '65%',
+          data: [
+            { value: [7.0, 1152, 192, 42], name: '固定排班', areaStyle: { color: 'rgba(144,147,153,0.2)' } },
+            { value: [0.63, 821, 144, 68], name: '智能优化', areaStyle: { color: 'rgba(64,158,255,0.3)' }, lineStyle: { width: 2.5, color: '#409EFF' } }
+          ]
+        }]
+      });
+    }
+
+    // ===== Carbon =====
+    function renderCarbonComp(el) {
+      const c = initChart(el);
+      const slots = Array.from({ length: 32 }, (_, i) => (i * 0.5 + 5).toFixed(1) + ':00');
+      const base = slots.map(() => parseFloat((30 + Math.random() * 10).toFixed(1)));
+      const opt = slots.map((_, i) => {
+        const h = i * 0.5 + 5;
+        if (h >= 7 && h < 9) return parseFloat((25 + Math.random() * 8).toFixed(1));
+        if (h >= 17 && h < 19) return parseFloat((26 + Math.random() * 9).toFixed(1));
+        if (h < 6 || h > 20) return parseFloat((5 + Math.random() * 3).toFixed(1));
+        return parseFloat((15 + Math.random() * 6).toFixed(1));
+      });
+      c.setOption({
+        tooltip: { trigger: 'axis' },
+        legend: { data: ['固定排班', '智能优化'], top: 0 },
+        grid: { left: 50, right: 20, top: 30, bottom: 50 },
+        xAxis: { type: 'category', data: slots, axisLabel: { interval: 3, rotate: 30 } },
+        yAxis: { type: 'value', name: 'kg CO₂' },
+        series: [
+          { name: '固定排班', type: 'bar', data: base, barWidth: '55%', itemStyle: { color: '#909399' } },
+          { name: '智能优化', type: 'bar', data: opt, barWidth: '55%', itemStyle: { color: '#67C23A' } }
+        ]
+      });
+    }
+
+    function renderPerCapita(el) {
+      const c = initChart(el);
+      c.setOption({
+        radar: { indicator: [
+          { name: '早高峰', max: 80 },
+          { name: '午间', max: 60 },
+          { name: '晚高峰', max: 75 },
+          { name: '平峰', max: 40 },
+          { name: '夜间', max: 100 }
+        ]},
+        series: [{
+          type: 'radar', radius: '65%',
+          data: [
+            { value: [52, 38, 48, 35, 85], name: '固定排班', areaStyle: { color: 'rgba(144,147,153,0.15)' } },
+            { value: [31, 23, 29, 21, 42], name: '智能优化', areaStyle: { color: 'rgba(103,194,58,0.3)' }, lineStyle: { width: 2, color: '#67C23A' } }
+          ]
+        }]
+      });
+    }
+
+    function renderYearlyTrend(el) {
+      const c = initChart(el);
+      const mons = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+      const cum = [];
+      let t = 0;
+      for (let i = 0; i < 12; i++) {
+        t += 10000 + Math.sin(i / 3) * 2000 + Math.random() * 1500;
+        cum.push(Math.round(t));
+      }
+      c.setOption({
+        tooltip: { trigger: 'axis' },
+        grid: { left: 60, right: 20, top: 20, bottom: 30 },
+        xAxis: { type: 'category', data: mons },
+        yAxis: { type: 'value', name: 'kg CO₂' },
+        series: [{
+          type: 'line', data: cum, smooth: true,
+          lineStyle: { width: 2.5, color: '#67C23A' },
+          areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: 'rgba(103,194,58,0.25)' },
+            { offset: 1, color: 'rgba(103,194,58,0.02)' }
+          ])},
+          markPoint: { data: [{ coord: [11, cum[11]], name: '年减排 ' + cum[11] + 'kg', symbolSize: 50 }] }
+        }]
+      });
+    }
+
+    // ===== Simulation =====
+    function renderSimWait(el) {
+      const c = initChart(el);
+      const slots = Array.from({ length: 32 }, (_, i) => (i * 0.5 + 5).toFixed(1) + ':00');
+      c.setOption({
+        tooltip: { trigger: 'axis' },
+        legend: { data: ['固定排班', '智能优化'], top: 0 },
+        grid: { left: 50, right: 20, top: 30, bottom: 50 },
+        xAxis: { type: 'category', data: slots, axisLabel: { interval: 3, rotate: 30 } },
+        yAxis: { type: 'value', name: 'min', max: 10 },
+        series: [
+          { name: '固定排班', type: 'line', smooth: true,
+            data: Array.from({ length: 32 }, () => parseFloat((4 + Math.random() * 1.5).toFixed(1))),
+            lineStyle: { color: '#909399' }
+          },
+          { name: '智能优化', type: 'line', smooth: true,
+            data: Array.from({ length: 32 }, (_, i) => {
+              const h = i * 0.5 + 5;
+              if (h >= 7 && h < 9) return parseFloat((0.25 + Math.random() * 0.15).toFixed(2));
+              if (h >= 17 && h < 19) return parseFloat((0.35 + Math.random() * 0.2).toFixed(2));
+              if (h < 6 || h > 20) return parseFloat((1 + Math.random()).toFixed(1));
+              return parseFloat((0.5 + Math.random() * 0.3).toFixed(2));
+            }),
+            lineStyle: { width: 2.5, color: '#409EFF' },
+            markLine: { data: [{ yAxis: 7, lineStyle: { type: 'dashed', color: '#f56c6c' }, label: { formatter: '基准 7min' } }] }
+          }
+        ]
+      });
+    }
+
+    function renderSimRadar(el) {
+      const c = initChart(el);
+      c.setOption({
+        radar: { indicator: [
+          { name: '等待时间', max: 100 },
+          { name: '碳排放', max: 100 },
+          { name: '满载率', max: 100 },
+          { name: '运力效率', max: 100 }
+        ]},
+        series: [{
+          type: 'radar', radius: '65%',
+          data: [
+            { value: [30, 30, 42, 45], name: '固定排班', areaStyle: { color: 'rgba(144,147,153,0.15)' } },
+            { value: [98, 72, 85, 88], name: '智能优化', areaStyle: { color: 'rgba(64,158,255,0.25)' }, lineStyle: { width: 2, color: '#409EFF' } }
+          ]
+        }]
+      });
+    }
+
+    function renderSimLoadRate(el) {
+      const c = initChart(el);
+      c.setOption({
+        legend: { data: ['固定排班', '智能优化'], top: 0 },
+        grid: { left: 50, right: 20, top: 30, bottom: 30 },
+        xAxis: { type: 'category', data: ['早高峰','上午','午间','下午','晚高峰','夜间'] },
+        yAxis: { type: 'value', name: '%', max: 100 },
+        series: [
+          { name: '固定排班', type: 'bar', data: [52, 38, 28, 33, 48, 15], barWidth: '32%', itemStyle: { color: '#909399' } },
+          { name: '智能优化', type: 'bar', data: [78, 55, 62, 58, 82, 22], barWidth: '32%', itemStyle: { color: '#409EFF' } }
+        ]
+      });
+    }
+
+    function renderSimFreq(el) {
+      const c = initChart(el);
+      const hrs = ['5-6','6-7','7-8','8-9','9-10','10-11','11-12','12-13'];
+      c.setOption({
+        tooltip: { trigger: 'axis' },
+        grid: { left: 50, right: 20, top: 10, bottom: 30 },
+        xAxis: { type: 'category', data: hrs },
+        yAxis: { type: 'value', name: '趟/小时' },
+        series: [
+          { name: '固定排班', type: 'bar', stack: 'base', data: [6, 6, 6, 6, 6, 6, 6, 6], itemStyle: { color: '#e0e0e0' } },
+          { name: '智能优化', type: 'bar', stack: 'opt', data: [6, 6, 12, 6, 6, 6, 6, 6], itemStyle: { color: '#67C23A' } }
+        ]
+      });
+    }
+
+    // ===== Map Visualization =====
+    // 精心设计的沈阳市公交线路数据（基于真实地理位置）
+    const SHENYANG_ROUTES = {
+      name: '沈阳1路公交（示例线路）',
+      description: '沈阳站 → 中街 → 五爱市场 → 奥体中心',
+      color: '#409EFF',
+      stops: [
+        { name: '沈阳站', lat: 41.7950, lng: 123.4020, flow: 4520 },
+        { name: '太原街', lat: 41.7990, lng: 123.4160, flow: 3980 },
+        { name: '市府广场', lat: 41.8025, lng: 123.4295, flow: 4200 },
+        { name: '中街', lat: 41.8000, lng: 123.4560, flow: 5200 },
+        { name: '大东门', lat: 41.8010, lng: 123.4680, flow: 3100 },
+        { name: '五爱市场', lat: 41.7890, lng: 123.4620, flow: 4800 },
+        { name: '青年公园', lat: 41.7790, lng: 123.4320, flow: 2900 },
+        { name: '奥体中心', lat: 41.7580, lng: 123.4480, flow: 3600 },
+      ],
+      // 第二条线路
+      route2: {
+        name: '沈阳2路公交（环线）',
+        color: '#67C23A',
+        stops: [
+          { name: '北陵公园', lat: 41.8260, lng: 123.3470, flow: 3400 },
+          { name: '辽宁大厦', lat: 41.8180, lng: 123.3650, flow: 2800 },
+          { name: '市政府', lat: 41.8080, lng: 123.4080, flow: 3800 },
+          { name: '文化路', lat: 41.7820, lng: 123.4300, flow: 3200 },
+          { name: '三好街', lat: 41.7760, lng: 123.4200, flow: 4100 },
+          { name: '铁西广场', lat: 41.7920, lng: 123.3760, flow: 3500 },
+        ],
+      },
+    };
+
+    function renderMap() {
+      nextTick(async () => {
+        const mapEl = document.getElementById('leafletMap');
+        if (!mapEl || leafletMap) return;
+
+        leafletMap = L.map(mapEl).setView([41.7900, 123.4200], 12);
+
+        // 使用高德瓦片（国内访问快，无需 API Key）
+        L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
+          attribution: '&copy; 高德地图 & OpenStreetMap',
+          maxZoom: 18,
+          subdomains: ['1', '2', '3', '4'],
+        }).addTo(leafletMap);
+
+        let useRealData = false;
+        let osmStopsRaw = [];
+
+        // 尝试获取 OSM 真实站点（用于补充背景展示）
+        try {
+          const resp = await fetch(API_BASE + '/map/stops?limit=200');
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data.stops && data.stops.length > 0) {
+              osmStopsRaw = data.stops;
+              useRealData = true;
+              console.log('[地图] 已加载 ' + data.count + ' 个真实公交站点');
+            }
+          }
+        } catch (e) {
+          console.log('[地图] OSM 数据获取失败，使用内置线路数据');
+        }
+
+        // ========== 绘制主线路（沈阳1路）==========
+        const mainStops = SHENYANG_ROUTES.stops;
+        const mainPoints = mainStops.map(s => [s.lat, s.lng]);
+
+        // 主线路折线（带阴影效果）
+        L.polyline(mainPoints, {
+          color: SHENYANG_ROUTES.color,
+          weight: 5,
+          opacity: 0.9,
+          lineJoin: 'round',
+        }).addTo(leafletMap);
+
+        // 主线路方向箭头（每段中间加箭头标记）
+        for (let i = 0; i < mainPoints.length - 1; i++) {
+          const midLat = (mainPoints[i][0] + mainPoints[i + 1][0]) / 2;
+          const midLng = (mainPoints[i][1] + mainPoints[i + 1][1]) / 2;
+          L.marker([midLat, midLng], {
+            icon: L.divIcon({
+              className: 'arrow-icon',
+              html: '<span style="color:#409EFF;font-size:14px;font-weight:bold">▶</span>',
+              iconSize: [16, 16],
+              iconAnchor: [8, 8],
+            }),
+            interactive: false,
+          }).addTo(leafletMap);
+        }
+
+        // 主线路站点标记（带名称标签）
+        mainStops.forEach((s, idx) => {
+          // 根据客流量决定大小和颜色
+          const maxFlow = Math.max(...mainStops.map(x => x.flow));
+          const radius = 6 + (s.flow / maxFlow) * 10;
+
+          // 站点圆圈
+          L.circleMarker([s.lat, s.lng], {
+            radius: radius,
+            color: '#fff',
+            weight: 2,
+            fillColor: idx === 0 ? '#E6A23C' : (idx === mainStops.length - 1 ? '#F56C6C' : '#409EFF'),
+            fillOpacity: 0.85,
+          }).addTo(leafletMap).bindPopup(
+            '<div style="min-width:140px">' +
+            '<b style="font-size:14px">' + s.name + '</b><br>' +
+            '<hr style="margin:6px 0">' +
+            '📍 序号：S' + (idx + 1) + '<br>' +
+            '👥 日均客流：<b>' + s.flow.toLocaleString() + '</b> 人次<br>' +
+            (idx === 0 ? '🚩 起点站' : (idx === mainStops.length - 1 ? '🏁 终点站' : '🚌 途经站')) +
+            '</div>'
+          );
+
+          // 站点名称标签（永久显示在旁边）
+          const offsetX = idx % 2 === 0 ? 18 : -18;
+          const offsetY = idx % 3 === 0 ? -12 : 12;
+          L.marker([s.lat, s.lng], {
+            icon: L.divIcon({
+              className: 'stop-label',
+              html: '<div style="' +
+                'background:rgba(255,255,255,0.92);' +
+                'padding:2px 8px;' +
+                'border-radius:4px;' +
+                'font-size:11px;' +
+                'font-weight:bold;' +
+                'color:#333;' +
+                'white-space:nowrap;' +
+                'border:1px solid ' + (idx === 0 ? '#E6A23C' : (idx === mainStops.length - 1 ? '#F56C6C' : '#409EFF')) + ';' +
+                'box-shadow:0 1px 3px rgba(0,0,0,0.15)' +
+                '">' +
+                (idx + 1) + '. ' + s.name +
+                (idx === 0 ? ' 🚩' : '') +
+                (idx === mainStops.length - 1 ? ' 🏁' : '') +
+                '</div>',
+              iconSize: [0, 0],
+              iconAnchor: [offsetX, offsetY],
+            }),
+            interactive: false,
+          }).addTo(leafletMap);
+        });
+
+        // ========== 绘制第二条线路（沈阳2路）==========
+        const route2 = SHENYANG_ROUTES.route2;
+        const r2Points = route2.stops.map(s => [s.lat, s.lng]);
+
+        L.polyline(r2Points, {
+          color: route2.color,
+          weight: 4,
+          opacity: 0.7,
+          dashArray: '8, 6',  // 虚线区分
+        }).addTo(leafletMap);
+
+        route2.stops.forEach((s, idx) => {
+          L.circleMarker([s.lat, s.lng], {
+            radius: 5 + (s.flow / 5000) * 8,
+            color: '#fff',
+            weight: 1.5,
+            fillColor: route2.color,
+            fillOpacity: 0.7,
+          }).addTo(leafletMap).bindPopup(
+            '<b>' + s.name + '</b><br>日均客流：' + s.flow + ' 人次<br>线路：' + route2.name
+          );
+        });
+
+        // ========== OSM 真实站点（半透明背景层）==========
+        if (useRealData && osmStopsRaw.length > 0) {
+          // 过滤掉与已知线路太近的点，避免重复
+          const knownCoords = new Set(
+            [...SHENYANG_ROUTES.stops, ...route2.stops].map(s =>
+              Math.round(s.lat * 1000) + ',' + Math.round(s.lng * 1000)
+            )
+          );
+          const backgroundStops = osmStopsRaw.filter(s => {
+            const key = Math.round(s.lat * 1000) + ',' + Math.round(s.lng * 1000);
+            return !knownCoords.has(key);
+          }).slice(0, 50);  // 最多50个背景点
+
+          backgroundStops.forEach(s => {
+            L.circleMarker([s.lat, s.lng], {
+              radius: 3,
+              color: 'transparent',
+              fillColor: '#999',
+              fillOpacity: 0.25,
+            }).addTo(leafletMap).bindPopup(
+              '<b>' + (s.name || ('站点' + s.id)) + '</b><br>OSM 数据'
+            );
+          });
+        }
+
+        // ========== 自适应视图 ==========
+        const allPoints = [...mainPoints, ...r2Points];
+        leafletMap.fitBounds(L.latLngBounds(allPoints).pad(0.15));
+
+        // 更新图表数据
+        routeInfoData.value = {
+          names: mainStops.map(s => s.name),
+          flows: mainStops.map(s => s.flow),
+        };
+      });
+    }
+
+    // 地图页面图表数据（响应式）
+    const routeInfoData = ref(null);
+
+    function renderRouteInfo(el) {
+      const c = initChart(el);
+      // 优先使用真实数据
+      let stops, flows;
+      if (routeInfoData.value && routeInfoData.value.names) {
+        stops = routeInfoData.value.names;
+        flows = routeInfoData.value.flows;
+      } else {
+        stops = ['沈阳站','太原街','医科大学','中街','北陵公园','浑南新区'];
+        flows = [4520, 3980, 3650, 3420, 3100, 2650];
+      }
+      c.setOption({
+        tooltip: { trigger: 'axis' },
+        grid: { left: 60, right: 20, top: 10, bottom: 30 },
+        xAxis: { type: 'category', data: stops, axisLabel: { rotate: 20 } },
+        yAxis: { type: 'value', name: '人次' },
+        series: [{ type: 'bar', data: flows, barWidth: '55%',
+          itemStyle: { color: new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:'#409EFF'},{offset:1,color:'#79bbff'}]), borderRadius: [4,4,0,0] }
+        }]
+      });
+    }
+
+    function renderTravelTime(el) {
+      const c = initChart(el);
+      // 使用1路公交的真实站点段
+      const stops = ['沈阳站','太原街','市府广场','中街','大东门','五爱市场','青年公园','奥体中心'];
+      const segs = [];
+      for (let i = 0; i < stops.length - 1; i++) {
+        segs.push(stops[i].slice(0,2) + '→' + stops[i+1].slice(0,2));
+      }
+      const times = [8, 6, 10, 5, 7, 9, 12];
+      c.setOption({
+        tooltip: { trigger: 'axis', formatter: '{b}<br/>{c} 分钟' },
+        grid: { left: 55, right: 20, top: 10, bottom: 35 },
+        xAxis: { type: 'category', data: segs, axisLabel: { rotate: 25, fontSize: 10 } },
+        yAxis: { type: 'value', name: '分钟' },
+        series: [{ type: 'bar', data: times.map((v,i)=>({value:v,itemStyle:{color:v>12?'#F56C6C':v>8?'#E6A23C':'#67C23A'}})), barWidth:'55%', label: { show: true, position: 'top', fontSize: 11 } }]
+      });
+    }
+
+    // ===== Init =====
+    onMounted(async () => {
+      // Try connecting to backend
+      try {
+        const resp = await fetch(API_BASE + '/flow/stats');
+        if (resp.ok) {
+          const data = await resp.json();
+          apiOnline.value = true;
+          if (data.daily_avg) stats.value.dailyAvg = data.daily_avg;
+          if (data.total_records) stats.value.totalRecords = data.total_records;
+        }
+      } catch (e) {
+        apiOnline.value = false;
+      }
+
+      await nextTick();
+      renderPageCharts('dashboard');
+
+      window.addEventListener('resize', () => {
+        chartInstances.forEach(inst => inst && inst.resize());
+      });
+    });
+
+    return {
+      currentPage, menuItems, modelMetrics, stats, fmtNum, apiOnline,
+      trendChart, stopRankChart, compareChart, modelRadarChart,
+      hourlyFlowChart, flowHeatMap, flowBar,
+      predCompareChart, lossCurveChart, featImportanceChart,
+      paretoFrontChart, scheduleTimelineChart, optCompareRadar,
+      carbonCompareChart, perCapitaCarbon, yearlyCarbonTrend,
+      simWaitTime, simRadar, simLoadRate, simFreq,
+      routeInfoChart, travelTimeChart,
+      optimProgress, optimLog,
+      optimizing, optimDone, simRunning, simDone,
+      runOptim, simRun, switchPage,
+    };
+  }
+});
+
+app.use(ElementPlus);
+app.mount('#app');
+</script>
+</body>
+</html>

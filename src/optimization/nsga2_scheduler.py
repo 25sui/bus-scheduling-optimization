@@ -1,0 +1,350 @@
+"""
+NSGA-II 多目标排班优化器（升级版：三目标 + 约束处理）
+
+使用DEAP库实现非支配排序遗传算法(NSGA-II)，
+同时优化三个目标：
+  目标1：最小化乘客平均等待时间
+  目标2：最小化总碳排放量
+  目标3：最小化总运营成本
+
+支持真实约束：车辆数约束（惩罚函数法）。
+优化结果持久化保存到 JSON 文件。
+"""
+
+import numpy as np
+import random
+import json
+from datetime import datetime
+from pathlib import Path
+from deap import base, creator, tools, algorithms
+
+import sys
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+from src.config import OPTIMIZATION_CONFIG, BUS_ROUTE, CARBON_EMISSION
+from src.optimization.carbon_calc import CarbonCalculator
+
+
+# ── 全局：只需创建一次 DEAP 类型 ─────────────────────────────
+
+def _ensure_creator():
+    """确保 DEAP creator 类型已注册（全局只注册一次）。"""
+    if not hasattr(creator, "FitnessMin"):
+        # 三目标：(-等待时间, -碳排放, -运营成本)
+        creator.create("FitnessMin", base.Fitness, weights=(-1.0, -1.0, -1.0))
+    if not hasattr(creator, "Individual"):
+        creator.create("Individual", list, fitness=creator.FitnessMin)
+
+
+# ── 核心调度器类 ───────────────────────────────────────────────
+
+class NSGA2Scheduler:
+    """NSGA-II 公交排班优化器（三目标 + 约束）"""
+
+    def __init__(self):
+        self.cfg = OPTIMIZATION_CONFIG.copy()
+        self.route_cfg = BUS_ROUTE.copy()
+        self.carbon_calc = CarbonCalculator()
+        self.num_time_slots = int(self.route_cfg["operating_hours"] * 60 / 30)
+        self._result_dir = Path(__file__).resolve().parent.parent.parent / "models" / "optimization_runs"
+        self._result_dir.mkdir(parents=True, exist_ok=True)
+        _ensure_creator()
+        self._setup_toolbox()
+
+    # ── 工具箱设置 ──────────────────────────────────────────────
+
+    def _setup_toolbox(self):
+        """初始化遗传算法工具箱"""
+        self.toolbox = base.Toolbox()
+
+        # 基因：每个时间窗口的发车间隔（分钟）
+        self.toolbox.register(
+            "attr_headway", random.randint,
+            self.cfg["min_headway"],
+            self.cfg["max_headway_offpeak"]
+        )
+
+        # 个体：num_time_slots 个发车间隔值
+        self.toolbox.register(
+            "individual", tools.initRepeat,
+            creator.Individual,
+            self.toolbox.attr_headway,
+            self.num_time_slots
+        )
+
+        # 种群
+        self.toolbox.register("population", tools.initRepeat, list, self.toolbox.individual)
+
+        # 遗传算子
+        self.toolbox.register("mate", tools.cxBlend, alpha=0.5)
+        self.toolbox.register("mutate", self._mutate_headway, indpb=0.2)
+        self.toolbox.register("select", tools.selNSGA2)
+        self.toolbox.register("evaluate", self._evaluate_individual)
+
+    # ── 遗传算子细节 ─────────────────────────────────────────
+
+    def _mutate_headway(self, individual, indpb: float):
+        """自定义变异：在合理范围内随机调整，并修复越界。"""
+        for i in range(len(individual)):
+            if random.random() < indpb:
+                is_peak = self._is_peak_hour(i)
+                max_h = self.cfg["max_headway_peak"] if is_peak else self.cfg["max_headway_offpeak"]
+                min_h = self.cfg["min_headway"]
+                delta = random.randint(-3, 3)
+                individual[i] = int(np.clip(individual[i] + delta, min_h, max_h))
+        return (individual,)
+
+    @staticmethod
+    def _is_peak_hour(time_slot_idx: int) -> bool:
+        """判断是否高峰时段"""
+        hour = (time_slot_idx * 30) / 60.0 + 5  # 从5点开始
+        return (7 <= hour < 9) or (17 <= hour < 19)
+
+    # ── 约束计算 ────────────────────────────────────────────────
+
+    def _calc_total_trips(self, schedule: list) -> int:
+        """计算总发车趟数"""
+        total = 0
+        for h in schedule:
+            if h <= 0:
+                continue
+            # 每30分钟窗口内的发车次数
+            trips = max(1, int(30 / h))
+            total += trips
+        return total
+
+    def _calc_operating_cost(self, schedule: list) -> float:
+        """计算总运营成本（元）"""
+        total_trips = self._calc_total_trips(schedule)
+        total_distance = total_trips * self.route_cfg["route_length_km"]
+
+        # 燃料/电费
+        cost_distance = total_distance * self.cfg["cost_per_km"]
+
+        # 驾驶员薪资（简化：每趟平均1.5小时，按 `driver_wage_per_hour` 计算）
+        total_driver_hours = total_trips * (self.route_cfg["route_length_km"] / self.route_cfg["avg_speed_kmh"])
+        driver_cost = total_driver_hours * self.cfg["driver_wage_per_hour"]
+
+        return cost_distance + driver_cost
+
+    def _vehicle_penalty(self, schedule: list) -> float:
+        """车辆数约束惩罚（若总趟数 > 车队规模）。
+        返回惩罚值（0 表示无约束违反）。
+        """
+        total_trips = self._calc_total_trips(schedule)
+        fleet = self.cfg["fleet_size"]
+        if total_trips <= fleet:
+            return 0.0
+        # 超出部分每趟惩罚 50 元（可调）
+        return (total_trips - fleet) * 50.0
+
+    # ── 目标函数评估 ─────────────────────────────────────────
+
+    def _evaluate_individual(self, individual: list) -> tuple:
+        """
+        评估个体的三目标函数值。
+        返回 (waiting_time, carbon_emission, operating_cost)，
+        均为最小化目标。
+        """
+        schedule = np.array(individual)
+
+        # 目标1：乘客平均等待时间
+        avg_wait = self._calc_avg_waiting_time(schedule)
+
+        # 目标2：总碳排放
+        carbon_result = self.carbon_calc.calculate_daily_emission(
+            schedule, self.route_cfg["route_length_km"], self.route_cfg["total_stops"]
+        )
+        total_carbon = carbon_result["total_emission_kg"]
+
+        # 目标3：总运营成本
+        operating_cost = self._calc_operating_cost(schedule)
+
+        # 约束惩罚（加入所有目标）
+        penalty = self._vehicle_penalty(schedule)
+        avg_wait += penalty * 0.01   # 等待时间也受惩罚（轻微）
+        total_carbon += penalty * 0.005
+        operating_cost += penalty
+
+        return (avg_wait, total_carbon, operating_cost)
+
+    def _calc_avg_waiting_time(self, schedule: np.ndarray) -> float:
+        """计算乘客平均等待时间（加权）"""
+        total_wait = 0.0
+        total_passenger = 0.0
+
+        for i, headway in enumerate(schedule):
+            if headway <= 0:
+                continue
+            hour = (i * 30) / 60.0 + 5
+            passenger_weight = self._estimate_passengers(hour)
+
+            # 平均等待时间 = 发车间隔 / 2（均匀到达假设）
+            wait_time = headway / 2.0
+            total_wait += wait_time * passenger_weight
+            total_passenger += passenger_weight
+
+        if total_passenger == 0:
+            return 999.0
+
+        return round(total_wait / total_passenger, 3)
+
+    @staticmethod
+    def _estimate_passengers(hour: float) -> float:
+        """估算某小时段的相对客流量"""
+        if 7 <= hour < 9:
+            return 80.0
+        elif 17 <= hour < 19:
+            return 70.0
+        elif 11 <= hour < 13:
+            return 50.0
+        elif hour < 6 or hour > 20:
+            return 10.0
+        else:
+            return 30.0
+
+    # ── 主优化流程 ──────────────────────────────────────────────
+
+    def run(self) -> dict:
+        """
+        执行 NSGA-II 三目标优化。
+
+        Returns:
+            result: 包含 Pareto 前沿、推荐解等信息的字典
+        """
+        print("=" * 60)
+        print("[NSGA-II] 开始三目标优化...")
+        print(f"  种群大小: {self.cfg['population_size']}")
+        print(f"  迭代代数: {self.cfg['num_generations']}")
+        print(f"  时间窗口数: {self.num_time_slots}")
+        print(f"  优化目标: 等待时间 + 碳排放 + 运营成本")
+        print(f"  车辆数约束: ≤ {self.cfg['fleet_size']} 趟/日")
+        print("=" * 60)
+
+        pop = self.toolbox.population(n=self.cfg["population_size"])
+        hof = tools.ParetoFront()  # Pareto 最优前沿
+
+        stats = tools.Statistics(lambda ind: ind.fitness.values)
+        stats.register("avg", np.mean, axis=0)
+        stats.register("min", np.min, axis=0)
+        stats.register("std", np.std, axis=0)
+
+        algorithms.eaMuPlusLambda(
+            pop, self.toolbox,
+            mu=self.cfg["population_size"],
+            lambda_=self.cfg["population_size"],
+            cxpb=self.cfg["crossover_prob"],
+            mutpb=self.cfg["mutation_prob"],
+            ngen=self.cfg["num_generations"],
+            stats=stats,
+            halloffame=hof,
+            verbose=True,
+        )
+
+        # 整理 Pareto 前沿解
+        pareto_solutions = []
+        for ind in hof.items:
+            pareto_solutions.append({
+                "schedule": list(ind),
+                "waiting_time": round(ind.fitness.values[0], 3),
+                "carbon_emission": round(ind.fitness.values[1], 2),
+                "operating_cost": round(ind.fitness.values[2], 2),
+            })
+
+        # TOPSIS 选择推荐方案（三目标归一化距离）
+        recommended = self._select_recommended(pareto_solutions)
+
+        result = {
+            "pareto_front": pareto_solutions,
+            "recommended": recommended,
+            "num_pareto": len(pareto_solutions),
+            "config": {
+                "pop_size": self.cfg["population_size"],
+                "generations": self.cfg["num_generations"],
+                "time_slots": self.num_time_slots,
+                "objectives": ["waiting_time", "carbon_emission", "operating_cost"],
+                "fleet_size": self.cfg["fleet_size"],
+            },
+        }
+
+        print(f"\n[完成] Pareto 最优解数: {len(pareto_solutions)}")
+        if recommended:
+            print(f"  推荐方案:")
+            print(f"    等待时间: {recommended['waiting_time']:.3f} 分钟")
+            print(f"    碳排放:   {recommended['carbon_emission']:.2f} kg CO₂")
+            print(f"    运营成本:   {recommended['operating_cost']:.2f} 元")
+
+        # 持久化保存
+        self._save_result(result)
+        return result
+
+    # ── TOPSIS 推荐方案选择 ───────────────────────────────────
+
+    def _select_recommended(self, solutions: list) -> dict:
+        """
+        从 Pareto 前沿中选择推荐方案。
+        使用 TOPSIS 思想：选择距理想点最近的解（三目标归一化）。
+        """
+        if not solutions:
+            return {}
+
+        waiting_times = [s["waiting_time"] for s in solutions]
+        carbons = [s["carbon_emission"] for s in solutions]
+        costs = [s["operating_cost"] for s in solutions]
+
+        w_min = min(waiting_times)
+        c_min = min(carbons)
+        o_min = min(costs)
+
+        best_score = float("inf")
+        best_idx = 0
+
+        for i, s in enumerate(solutions):
+            # 三目标归一化距离到理想点（等权）
+            norm_w = (s["waiting_time"] - w_min) / (max(waiting_times) - w_min + 1e-6)
+            norm_c = (s["carbon_emission"] - c_min) / (max(carbons) - c_min + 1e-6)
+            norm_o = (s["operating_cost"] - o_min) / (max(costs) - o_min + 1e-6)
+            # 等权组合（可调整权重）
+            score = (norm_w + norm_c + norm_o) / 3.0
+
+            if score < best_score:
+                best_score = score
+                best_idx = i
+
+        rec = solutions[best_idx].copy()
+        rec["topsis_score"] = round(best_score, 6)
+        return rec
+
+    # ── 优化结果持久化 ─────────────────────────────────────────
+
+    def _save_result(self, result: dict):
+        """保存优化结果到 JSON 文件（models/optimization_runs/）"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filepath = self._result_dir / f"run_{timestamp}.json"
+
+        # 裁剪：Pareto 前沿只保存前 50 个解（减少文件体积）
+        save_data = {
+            "timestamp": timestamp,
+            "config": result["config"],
+            "num_pareto": result["num_pareto"],
+            "recommended": result["recommended"],
+            "pareto_front": result["pareto_front"][:50],
+        }
+
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(save_data, f, ensure_ascii=False, indent=2)
+
+        print(f"[保存] 优化结果已保存: {filepath.name}")
+        return str(filepath)
+
+
+# ── CLI 入口 ──────────────────────────────────────────────────────
+
+def main():
+    """运行优化"""
+    scheduler = NSGA2Scheduler()
+    result = scheduler.run()
+    return result
+
+
+if __name__ == "__main__":
+    main()
