@@ -366,23 +366,16 @@ class NSGA2Scheduler:
             rec["selection_method"] = "feasible_both"
             return rec
 
-        # 第二优先级：没有同时满足的，选择综合得分最高的解
-        best = None
-        best_score = float('-inf')
-        
-        for s in solutions:
-            wait_red = (baseline_wait - s["waiting_time"]) / max(baseline_wait, 1e-6)
-            carbon_red = (baseline_carbon - s["carbon_emission"]) / max(baseline_carbon, 1e-6)
-            # 加权得分：等待时间改善占50%，碳排放改善占50%
-            score = wait_red * 0.5 + carbon_red * 0.5
-            
-            if score > best_score:
-                best_score = score
-                best = s
-
+        # 第二优先级：没有同时满足的，选择碳排放最低的解
+        # （因为硬约束是碳排放必须 ≤ 基线，若无法满足，则退而求其次选碳排放最小的）
+        best = min(solutions, key=lambda s: s["carbon_emission"])
         rec = best.copy()
-        rec["selection_method"] = "weighted_score"
-        rec["weighted_score"] = round(best_score, 4)
+        rec["selection_method"] = "min_carbon_fallback"
+        # 仍计算改善率字段（可能为负值）
+        wait_red = (baseline_wait - rec["waiting_time"]) / max(baseline_wait, 1e-6)
+        carbon_red = (baseline_carbon - rec["carbon_emission"]) / max(baseline_carbon, 1e-6)
+        rec["wait_reduction"] = round(wait_red, 4)
+        rec["carbon_reduction"] = round(carbon_red, 4)
         return rec
 
     # ── 优化结果持久化 ─────────────────────────────────────────
