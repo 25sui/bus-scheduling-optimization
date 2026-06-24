@@ -163,7 +163,7 @@ _carbon_calc = None
 _optimization_result = None
 _optimization_task = None
 
-OPTIM_RESULT_PATH = BASE_DIR / "data" / "processed" / "optimization_result.json"
+OPTIM_RESULT_PATH = PROCESSED_DATA_DIR / "optimization_result.json"
 
 def _save_optimization_result():
     """将 _optimization_result 保存到磁盘"""
