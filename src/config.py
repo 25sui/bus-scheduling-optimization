@@ -34,8 +34,8 @@ LSTM_CONFIG = {
 OPTIMIZATION_CONFIG = {
     "population_size": 150,       # 种群大小（增大以提升解的质量）
     "num_generations": 300,      # 迭代代数（增大以提升收敛性）
-    "crossover_prob": 0.9,
-    "mutation_prob": 0.15,       # 略增变异率，保持种群多样性
+    "crossover_prob": 0.85,    # 与 mutation_prob 之和必须 ≤1.0（DEAP 要求）
+    "mutation_prob": 0.15,       # 0.85 + 0.15 = 1.0，满足 DEAP 约束
     "min_headway": 3,        # 最小发车间隔（分钟）
     "max_headway_peak": 15,  # 高峰最大发车间隔（分钟）
     "max_headway_offpeak": 30,  # 平峰最大发车间隔（分钟）

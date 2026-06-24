@@ -142,7 +142,7 @@
       <div style="margin-bottom:16px;display:flex;gap:12px;align-items:center">
         <button @click="runOptim" :disabled="optimizing" style="padding:8px 20px;background:#409EFF;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">{{ optimizing?'优化中...':'▶ 运行 NSGA-II 优化' }}</button>
         <button @click="loadSampleOptim" :disabled="optimizing" style="padding:8px 20px;background:#67C23A;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">{{ optimDone?'已加载示例':'加载示例结果' }}</button>
-        <span style="background:#f4f4f5;padding:4px 12px;border-radius:4px;font-size:12px;color:#666">种群 100 · 代数 200</span>
+        <span style="background:#f4f4f5;padding:4px 12px;border-radius:4px;font-size:12px;color:#666">种群 80 · 代数 100</span>
         <span v-if="optimDone" style="background:#f0f9eb;padding:4px 12px;border-radius:4px;font-size:12px;color:#67C23A">已找到 Pareto 最优解</span>
       </div>
       <div v-if="optimizing || optimProgress>0" class="optim-progress" style="margin:12px 0">
@@ -226,7 +226,7 @@
       </div>
       <div v-if="simDone" class="info-box">
         <span style="font-size:28px;">📋</span>
-        <div><strong style="color:#1d39c4;font-size:15px">仿真验证结论</strong><br><span style="font-size:13px;color:#444;line-height:1.7">通过运营仿真器对固定排班（每10分钟一班）与智能优化方案进行为期一天的完整运营模拟，结果表明优化方案在等待时间、碳排放、运力利用效率三个维度均显著优于基准方案。优化后平均等待时间从 7 分钟降至 0.63 分钟，日减排 331.2 kg CO₂，同时保持了合理的载客率水平。</span></div>
+        <div><strong style="color:#1d39c4;font-size:15px">仿真验证结论</strong><br><span style="font-size:13px;color:#444;line-height:1.7" v-html="simConclusion"></span></div>
       </div>
     </template>
 
@@ -332,6 +332,7 @@ const app = createApp({
     const simulationResult = ref(null);
     const optimKpi = ref({ waitingTime: '-- min', carbon: '-- kg', waitReduce: '--%', carbonReduce: '--%', tripsReduced: '--' });
     const simKpi = ref({ waitImprove: '--%', carbonReduce: '--%', tripsReduced: '--', loadImprove: '--%' });
+    const simConclusion = ref('');
     let leafletMap = null;
 
     const chartInstances = [];
@@ -364,11 +365,11 @@ const app = createApp({
       optimizationResult.value = null;
 
       try {
-        // 1. 启动后端优化任务（使用轻量参数，确保能在 2 分钟内完成）
-        optimLog.value.push('[1/6] 正在提交优化任务到后端...（轻量模式：种群30，代数50）');
+        // 1. 启动后端优化任务（合理参数：种群80，代数100，兼顾质量与速度）
+        optimLog.value.push('[1/6] 正在提交优化任务到后端...（种群80，代数100）');
         const params = new URLSearchParams();
-        params.append('population_size', '30');
-        params.append('generations', '50');
+        params.append('population_size', '80');
+        params.append('generations', '100');
         const startResp = await fetch('/api/optimization/run?' + params.toString(), { method: 'POST' });
         if (!startResp.ok) throw new Error('启动失败 HTTP ' + startResp.status);
         const startData = await startResp.json();
@@ -482,6 +483,7 @@ const app = createApp({
           tripsReduced: '-48趟/日',
           loadImprove: '+61.9%',
         };
+        simConclusion.value = '通过运营仿真器对固定排班（每10分钟一班）与智能优化方案进行为期一天的完整运营模拟，结果表明优化方案在等待时间、碳排放、运力利用效率三个维度均显著优于基准方案。优化后平均等待时间改善 91.0%，碳排放降低 28.6%，减少班次 48 趟/日，满载率提升 61.9%。';
         await nextTick();
         renderSimChartsReal(simData, baseline, optimized);
       } catch (e) {
@@ -685,15 +687,43 @@ const app = createApp({
     function renderSimChartsReal(simData, baseline, optimized) {
       if (!simData) return;
 
-      // 更新 KPI 卡片
+      // 更新 KPI 卡片 + 动态生成仿真结论
       if (simData.summary) {
         const s = simData.summary;
+        const waitPct = s.wait_improve != null ? (s.wait_improve * 100).toFixed(1) : null;
+        const carbonPct = s.carbon_reduce != null ? (s.carbon_reduce * 100).toFixed(1) : null;
+        const tripsNum = s.trips_reduced != null ? s.trips_reduced : null;
+        const loadPct = s.load_improve != null ? (s.load_improve * 100).toFixed(1) : null;
+
         simKpi.value = {
-          waitImprove: s.wait_improve != null ? (s.wait_improve * 100).toFixed(1) + '%' : '--%',
-          carbonReduce: s.carbon_reduce != null ? (s.carbon_reduce * 100).toFixed(1) + '%' : '--%',
-          tripsReduced: s.trips_reduced != null ? '-' + s.trips_reduced + '趟/日' : '--',
-          loadImprove: s.load_improve != null ? '+' + (s.load_improve * 100).toFixed(1) + '%' : '--%',
+          waitImprove: waitPct != null ? '-' + waitPct + '%' : '--%',
+          carbonReduce: carbonPct != null ? (s.carbon_reduce >= 0 ? '-' : '+') + Math.abs(carbonPct) + '%' : '--%',
+          tripsReduced: tripsNum != null ? '-' + tripsNum + '趟/日' : '--',
+          loadImprove: loadPct != null ? '+' + loadPct + '%' : '--%',
         };
+
+        // 动态生成仿真结论文字
+        let conclusion = '通过运营仿真器对固定排班（每10分钟一班）与智能优化方案进行为期一天的完整运营模拟，';
+        if (waitPct && carbonPct && loadPct) {
+          const waitOk = s.wait_improve > 0;
+          const carbonOk = s.carbon_reduce > 0;
+          const loadOk = s.load_improve > 0;
+          if (waitOk && carbonOk && loadOk) {
+            conclusion += '优化方案在等待时间、碳排放、运力利用效率三个维度均显著优于基准方案。';
+          } else {
+            conclusion += '优化方案在部分维度优于基准方案，请关注碳排放变化。';
+          }
+          conclusion += '优化后平均等待时间改善 ' + waitPct + '%，';
+          if (carbonOk) {
+            conclusion += '碳排放降低 ' + carbonPct + '%，';
+          } else {
+            conclusion += '碳排放增加 ' + Math.abs(carbonPct) + '%，';
+          }
+          conclusion += '减少班次 ' + tripsNum + ' 趟/日，满载率提升 ' + loadPct + '%。';
+        } else {
+          conclusion += '优化方案在多个维度表现出改善，详细数据见上方图表。';
+        }
+        simConclusion.value = conclusion;
       }
 
       nextTick(() => {

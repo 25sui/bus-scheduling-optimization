@@ -163,6 +163,36 @@ _carbon_calc = None
 _optimization_result = None
 _optimization_task = None
 
+OPTIM_RESULT_PATH = BASE_DIR / "data" / "processed" / "optimization_result.json"
+
+def _save_optimization_result():
+    """将 _optimization_result 保存到磁盘"""
+    global _optimization_result
+    if _optimization_result is None:
+        return
+    try:
+        OPTIM_RESULT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(OPTIM_RESULT_PATH, "w", encoding="utf-8") as f:
+            json.dump(_convert_numpy(_optimization_result), f, ensure_ascii=False, indent=2)
+        print(f"[优化] 结果已保存到 {OPTIM_RESULT_PATH}")
+    except Exception as e:
+        print(f"[优化] 保存结果失败：{e}")
+
+def _load_optimization_result():
+    """从磁盘加载优化结果"""
+    global _optimization_result
+    if not OPTIM_RESULT_PATH.exists():
+        return
+    try:
+        with open(OPTIM_RESULT_PATH, "r", encoding="utf-8") as f:
+            _optimization_result = json.load(f)
+        print(f"[优化] 已从磁盘加载优化结果：{OPTIM_RESULT_PATH}")
+    except Exception as e:
+        print(f"[优化] 加载结果失败：{e}")
+
+# 启动时自动加载
+_load_optimization_result()
+
 
 def get_scheduler():
     global _scheduler
@@ -403,7 +433,8 @@ async def run_optimization(
             s = NSGA2Scheduler()
             s.cfg = cfg
             _optimization_result = s.run()
-            print("[优化] 完成")
+            _save_optimization_result()   # 立即持久化到磁盘
+            print("[优化] 完成，结果已保存")
         except Exception as e:
             print(f"[优化] 失败：{e}")
 
@@ -420,7 +451,11 @@ def get_optimization_result():
     if _optimization_task is not None and not _optimization_task.done():
         return {"status": "running", "message": "优化任务正在运行中"}
     if _optimization_result is None:
-        raise HTTPException(404, detail="尚未运行优化")
+        # 尝试再次从磁盘加载（防止启动时加载失败）
+        _load_optimization_result()
+        if _optimization_result is not None:
+            return _convert_numpy(_optimization_result)
+        raise HTTPException(404, detail="尚未运行优化，请先点击「运行 NSGA-II 优化」；若刚重启后端，可点击「加载示例结果」")
     return _convert_numpy(_optimization_result)
 
 
