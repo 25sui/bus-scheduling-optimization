@@ -62,43 +62,46 @@ class CarbonCalculator:
                                   route_length_km: float,
                                   num_stops: int = 20) -> dict:
         """
-        计算每日总碳排放
-
+        计算每日总碳排放（精确计算，不用 ceil）
+        
         Args:
             schedule: 各时段发车间隔数组 (分钟)，长度=时间窗口数
             route_length_km: 单程线路长度(km)
             num_stops: 站点数
-
+            
         Returns:
             details: 包含各项详细数据的字典
         """
         time_windows_per_hour = 60 / 30  # 30分钟窗口，每小时2个
-        total_trips = 0
+        total_trips = 0.0  # 改用浮点数，支持小数班次
         total_emission = 0.0
         trip_details = []
 
         for i, headway in enumerate(schedule):
             if headway <= 0:
                 continue
-
-            # 每个时间窗口的发车班次
+            
+            # 每个时间窗口的发车班次（精确计算，不用 ceil）
             window_minutes = 30
-            trips_in_window = int(np.ceil(window_minutes / headway))
+            trips_in_window = window_minutes / headway  # 可以是小数
             total_trips += trips_in_window
-
-            for _ in range(trips_in_window):
-                # 往返距离 = 单程 × 2
-                emission = self.calculate_trip_emission(
-                    route_length_km * 2,
-                    bus_type=self.default_bus_type,
-                    load_ratio=self.default_load_ratio,
-                )
-                total_emission += emission
-                trip_details.append({
-                    "time_window": i,
-                    "headway": headway,
-                    "emission_kg": emission,
-                })
+            
+            # 每趟碳排放（往返）
+            emission_per_trip = self.calculate_trip_emission(
+                route_length_km * 2,
+                bus_type=self.default_bus_type,
+                load_ratio=self.default_load_ratio,
+            )
+            
+            # 总碳排放 = 班次 × 每趟碳排放
+            total_emission += trips_in_window * emission_per_trip
+            
+            trip_details.append({
+                "time_window": i,
+                "headway": headway,
+                "trips": trips_in_window,
+                "emission_kg": trips_in_window * emission_per_trip,
+            })
 
         return {
             "total_trips": total_trips,
