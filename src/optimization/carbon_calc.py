@@ -125,8 +125,8 @@ class CarbonCalculator:
             包含基准碳排放的字典
         """
         total_minutes = operating_hours * 60
-        # 总趟数 = 运营总分钟数 / 发车间隔
-        total_trips = int(np.ceil(total_minutes / fixed_headway))
+        # 总趟数 = 运营总分钟数 / 发车间隔（精确计算，不用 ceil）
+        total_trips = total_minutes / fixed_headway
 
         # 每趟往返距离
         trip_distance = route_length_km * 2
