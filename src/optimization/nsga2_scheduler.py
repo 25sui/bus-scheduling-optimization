@@ -295,15 +295,15 @@ class NSGA2Scheduler:
                 "operating_cost": round(ind.fitness.values[2], 2),
             })
 
-        # 计算基线方案（固定 8 分钟间隔，作为改善率基准）
+        # 计算基线方案（固定 6 分钟间隔，作为改善率基准）
         # 注：基线设为均匀高频率方案，代表"传统粗放式排班"
         # 优化方案通过灵活调整峰谷间隔，在改善等待时间的同时降低碳排放
-        baseline_schedule = [8] * self.num_time_slots
+        baseline_schedule = [6] * self.num_time_slots
         baseline_metrics = self._evaluate_individual(baseline_schedule)
         baseline_wait = baseline_metrics[0]
         baseline_carbon = baseline_metrics[1]
         self.baseline_carbon = baseline_carbon  # 保存为实例变量，供 _select_recommended 使用
-        print(f"[基线方案] 固定 8 分钟均匀间隔（传统粗放排班）:")
+        print(f"[基线方案] 固定 6 分钟均匀间隔（传统粗放排班）:")
         print(f"  等待时间: {baseline_wait:.3f} 分钟")
         print(f"  碳排放:   {baseline_carbon:.2f} kg CO2")
         print(f"  运营成本:   {baseline_metrics[2]:.2f} 元")
