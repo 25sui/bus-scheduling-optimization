@@ -361,23 +361,23 @@ class NSGA2Scheduler:
                                  baseline_wait: float = None, 
                                  baseline_carbon: float = None) -> dict:
         """
-        从 Pareto 前沿中选择推荐方案。
+        从 Pareto 前沿中选择推荐方案（绿色发展优先）。
         策略：
-        1. 优先选择等待时间 ≤ 基线值 且 碳排放 ≤ 基线值 × 1.1 的解（允许10%容忍）；
-        2. 若有多个，选其中等待时间最短的解（兼顾乘客体验）；
-        3. 若没有满足的，则返回空字典（让前端提示用户约束过严）。
+        1. 硬约束：碳排放 ≤ 基线值（不允许超出）
+        2. 在可行解中选择等待时间最短的
+        3. 若没有满足的，则返回空字典（让 run() 的 fallback 处理）
         """
         if not solutions:
             return {}
-
-        # 使用动态基线（若调用方未传，则使用经验值）
+        
+        # 使用动态基线
         if baseline_wait is None:
             baseline_wait = 7.0
         if baseline_carbon is None:
-            baseline_carbon = 1152.0  # 与 run() 中的 baseline 一致
-
-        # 硬约束：碳排放 ≤ 基线值（不允许超出，强制低碳）
-        carbon_threshold = baseline_carbon * 1.0  # 硬约束：不允许超出基线
+            baseline_carbon = 1152.0
+        
+        # 硬约束：碳排放 ≤ 基线值
+        carbon_threshold = baseline_carbon * 1.0
         
         # 调试输出
         print(f"[调试] baseline_wait = {baseline_wait:.3f}")
@@ -385,7 +385,7 @@ class NSGA2Scheduler:
         print(f"[调试] carbon_threshold = {carbon_threshold:.2f}")
         print(f"[调试] Pareto 前沿解数量 = {len(solutions)}")
         
-        # 新策略：优先保证碳排放不超标，再优化等待时间
+        # 优先保证碳排放不超标
         carbon_feasible = [s for s in solutions
                             if s["carbon_emission"] <= carbon_threshold]
         
@@ -402,33 +402,7 @@ class NSGA2Scheduler:
         print(f"[推荐] 警告：没有找到满足碳排放约束的解（碳排放≤{carbon_threshold:.1f}）")
         print(f"  Pareto 前沿中最小碳排放 = {min(s['carbon_emission'] for s in solutions):.2f} kg")
         print(f"  建议：放宽约束或增加优化迭代次数")
-        return {}  # 返回空字典，让 run() 选择碳排放最低的解
-
-        # 新策略：优先保证碳排放不超标，再优化等待时间
-        # 第一优先级：碳排放 ≤ 基线值（硬约束，绿色发展）
-        carbon_feasible = [s for s in solutions
-                            if s["carbon_emission"] <= carbon_threshold]
-        
-        if carbon_feasible:
-            # 在碳排放可行的解中，选择等待时间最短的
-            best = min(carbon_feasible, key=lambda s: s["waiting_time"])
-            rec = best.copy()
-            rec["selection_method"] = "carbon_first"
-            return rec
-        
-        # 第二优先级：没有碳排放可行解，选择碳排放最低的解
-        best = min(solutions, key=lambda s: s["carbon_emission"])
-        rec = best.copy()
-        rec["selection_method"] = "min_carbon_fallback"
-        return rec
-
-        # 没有满足约束的解：返回空字典（不推荐次优解，避免误导用户）
-        print(f"[推荐] 警告：没有找到满足约束的解（等待时间≤{baseline_wait}，碳排放≤{carbon_threshold:.1f}）")
-        print(f"  Pareto 前沿中最小碳排放 = {min(s['carbon_emission'] for s in solutions):.2f} kg")
-        print(f"  建议：放宽约束或增加优化迭代次数")
-        return {}  # 返回空字典，让前端处理
-
-    # ── 优化结果持久化 ─────────────────────────────────────────
+        return {}
 
     def _save_result(self, result: dict):
         """保存优化结果到 JSON 文件（models/optimization_runs/）"""
