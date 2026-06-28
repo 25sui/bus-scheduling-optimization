@@ -42,3 +42,10 @@ models/*.joblib
 
 # FastAPI
 *.pid
+
+# Vite
+frontend/dist/
+frontend/.vite/
+
+# Optimization runs (large JSON files)
+models/optimization_runs/

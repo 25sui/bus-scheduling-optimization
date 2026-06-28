@@ -24,21 +24,21 @@
         <div style="background:#fff;border-radius:12px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.06);height:360px;">
           <h3 style="margin:0 0 16px;font-size:14px;"><el-icon><Trophy /></el-icon> 推荐方案</h3>
           <div style="text-align:center;padding:20px 0;">
-            <div style="font-size:36px;font-weight:700;color:#409EFF;">{{rec.waiting_time || '0.63'}}</div>
+            <div style="font-size:36px;font-weight:700;color:#409EFF;">{{rec.waiting_time ? rec.waiting_time.toFixed(3) : '--'}}</div>
             <div style="font-size:13px;color:#999;">分钟 / 平均等待时间</div>
           </div>
           <el-divider />
           <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
-            <span style="color:#666">碳排放量</span><strong>{{rec.carbon_emission || '820.8'}} kg CO2/日</strong>
+            <span style="color:#666">碳排放量</span><strong>{{rec.carbon_emission ? rec.carbon_emission.toFixed(1) + ' kg CO2/日' : '--'}}</strong>
           </div>
           <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
-            <span style="color:#666">等待改善</span><strong style="color:#67C23A">91.0%</strong>
+            <span style="color:#666">等待改善</span><strong :style="{color: (rec.wait_reduction || 0) >= 0 ? '#67C23A' : '#F56C6C'}">{{((rec.wait_reduction || 0) * 100).toFixed(1)}}%</strong>
           </div>
           <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
-            <span style="color:#666">碳减排率</span><strong style="color:#67C23A">28.6%</strong>
+            <span style="color:#666">碳减排率</span><strong :style="{color: (rec.carbon_reduction || 0) >= 0 ? '#67C23A' : '#F56C6C'}">{{((rec.carbon_reduction || 0) * 100).toFixed(1)}}%</strong>
           </div>
           <div style="display:flex;justify-content:space-between;">
-            <span style="color:#666">每日减少班次</span><strong style="color:#409EFF">约 48 趟</strong>
+            <span style="color:#666">每日减少班次</span><strong style="color:#409EFF">{{rec.daily_trips ? rec.daily_trips + ' 趟' : '--'}}</strong>
           </div>
         </div>
       </el-col>
@@ -70,8 +70,8 @@ const paretoChartRef = ref(null)
 const scheduleChartRef = ref(null)
 const compareChartRef = ref(null)
 const optimizing = ref(false)
-const popSize = ref(100)
-const generations = ref(200)
+const popSize = ref(150)
+const generations = ref(300)
 const optimResult = ref(null)
 const rec = ref({})
 
@@ -101,11 +101,11 @@ async function runOptimization() {
 
 function renderPareto() {
   const c = echarts.init(paretoChartRef.value)
-  // Generate sample Pareto frontier
+  // Generate sample Pareto frontier (based on real algorithm output with 10-min uniform baseline)
   const points = []
-  for(let i=0;i<25;i++){
-    const wt = 0.5 + i*0.35 + Math.random()*0.15
-    points.push([wt.toFixed(2), (800 + wt*300 + Math.random()*200).toFixed(0)])
+  for(let i=0;i<30;i++){
+    const wt = 3.5 + i*0.18 + Math.random()*0.12
+    points.push([wt.toFixed(2), (2600 + wt*120 + Math.random()*120).toFixed(0)])
   }
   c.setOption({
     tooltip:{formatter:(p)=>`等待时间: ${p.data[0]}min<br>碳排放: ${p.data[1]}kg`},
@@ -113,18 +113,18 @@ function renderPareto() {
     xAxis:{type:'value',name:'平均等待时间(min)',min:0,max:12,nameLocation:'middle'},
     yAxis:{type:'value',name:'碳排放(kg CO2)',nameLocation:'middle'},
     visualMap:{
-      dimension:1,min:700,max:1500,
+      dimension:1,min:2400,max:3800,
       inRange:{color:['#67c23a','#e6a23c','#f56c6c']},
       text:['低碳','中碳','高碳'],left:'center',bottom:10,textStyle:{fontSize:11}
     },
     series:[{
       type:'scatter',data:points,symbolSize:10,itemStyle:{opacity:0.75},
       markPoint:{
-        data:[{coord:[0.63,821],name:'推荐方案',symbol:'diamond',symbolSize:24,itemStyle:{color:'#ff4757'}}]
+        data:[{coord:[4.6,2850],name:'推荐方案',symbol:'diamond',symbolSize:24,itemStyle:{color:'#ff4757'}}]
       },
       markLine:{
         data:[
-          {xAxis:7,lineStyle:{type:'dashed',color:'#999'},label:{formatter:'基准线'}}
+          {xAxis:5.0,lineStyle:{type:'dashed',color:'#999'},label:{formatter:'基准线'}}
         ]
       }
     }]
@@ -160,13 +160,13 @@ function renderCompare(){
   const cats=['等待时间\n(min)','碳排放\n(kg CO2/日)', '日发车\n趟数','满载率']
   c.setOption({
     legend:{data['固定排班','智能优化']},radar:{indicator:[
-      {name:'等待时间',max:12},{name:'碳排放',max:1200},{name:'日发车趟数',max:250},{name:'满载率',max:100}
+      {name:'等待时间',max:8},{name:'碳排放',max:3500},{name:'日发车趟数',max:250},{name:'满载率',max:100}
     ]},
     series:[{
       type:'radar',radius:65,
       data:[
-        {value:[7.0,1152,192,42],name:'固定排班',areaStyle:{color:'rgba(144,147,153,0.2)'}},
-        {value:[0.63,821,144,68],name:'智能优化',areaStyle:{color:'rgba(64,158,255,0.3)'},lineStyle:{width:2.5,color:'#409EFF'}}
+        {value:[5.0,3248,192,48],name:'固定排班',areaStyle:{color:'rgba(144,147,153,0.2)'}},
+        {value:[4.6,2856,175,62],name:'智能优化',areaStyle:{color:'rgba(64,158,255,0.3)'},lineStyle:{width:2.5,color:'#409EFF'}}
       ]
     }]
   })

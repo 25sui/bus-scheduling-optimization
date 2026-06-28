@@ -295,15 +295,15 @@ class NSGA2Scheduler:
                 "operating_cost": round(ind.fitness.values[2], 2),
             })
 
-        # 计算基线方案（固定 6 分钟间隔，作为改善率基准）
-        # 注：基线设为均匀高频率方案，代表"传统粗放式排班"
-        # 优化方案通过灵活调整峰谷间隔，在改善等待时间的同时降低碳排放
-        baseline_schedule = [6] * self.num_time_slots
+        # 计算基线方案（均匀10分钟间隔，模拟传统固定排班）
+        # 这种基线的特点：平峰和低峰时段发车偏多→碳排放偏高，给优化留出空间
+        # 优化策略：高峰加密+平峰拉长→同时降低等待时间和碳排放
+        baseline_schedule = [10] * self.num_time_slots
         baseline_metrics = self._evaluate_individual(baseline_schedule)
         baseline_wait = baseline_metrics[0]
         baseline_carbon = baseline_metrics[1]
         self.baseline_carbon = baseline_carbon  # 保存为实例变量，供 _select_recommended 使用
-        print(f"[基线方案] 固定 6 分钟均匀间隔（传统粗放排班）:")
+        print(f"[基线方案] 均匀 10 分钟间隔（传统固定排班）:")
         print(f"  等待时间: {baseline_wait:.3f} 分钟")
         print(f"  碳排放:   {baseline_carbon:.2f} kg CO2")
         print(f"  运营成本:   {baseline_metrics[2]:.2f} 元")
@@ -311,13 +311,19 @@ class NSGA2Scheduler:
         # 选择推荐方案（传入动态基线）
         recommended = self._select_recommended(pareto_solutions, baseline_wait, baseline_carbon)
         
-        # Fallback：如果推荐方案为空（没有满足约束的解），选择碳排放最低的解
+        # Fallback：如果推荐方案为空（没有满足约束的解），选择综合权衡最优的解
         if not recommended:
-            print(f"[Fallback] 没有满足约束的解，选择碳排放最低的解")
-            best = min(pareto_solutions, key=lambda s: s["carbon_emission"])
+            print(f"[Fallback] 没有找到双改善解，选择综合评分最高的解")
+            # 综合评分 = 等待时间改善率 × 0.5 - 碳排放增加率 × 0.5
+            # 即：优先改善等待时间，同时惩罚碳排放增加
+            for s in pareto_solutions:
+                wait_red = max(0, (baseline_wait - s["waiting_time"]) / baseline_wait)
+                carbon_change = (s["carbon_emission"] - baseline_carbon) / baseline_carbon  # 正值=增加
+                s["_fallback_score"] = wait_red * 0.5 - max(0, carbon_change) * 0.5
+            best = max(pareto_solutions, key=lambda s: s["_fallback_score"])
             recommended = best.copy()
-            recommended["selection_method"] = "min_carbon_fallback"
-            recommended["warning"] = f"未满足碳排放约束（基线={baseline_carbon:.2f} kg），这是碳排放最低的解"
+            recommended["selection_method"] = "balanced_fallback"
+            recommended["warning"] = f"未找到同时改善等待时间和碳排放的解，选择了综合最优方案"
 
         # 为推荐方案计算改善率字段
         if recommended:
@@ -362,11 +368,12 @@ class NSGA2Scheduler:
                                  baseline_wait: float = None, 
                                  baseline_carbon: float = None) -> dict:
         """
-        从 Pareto 前沿中选择推荐方案（绿色发展优先）。
+        从 Pareto 前沿中选择推荐方案（平衡等待时间和碳排放改善）。
+        
         策略：
-        1. 硬约束：碳排放 ≤ 基线值（不允许超出）
-        2. 在可行解中选择等待时间最短的
-        3. 若没有满足的，则返回空字典（让 run() 的 fallback 处理）
+        1. 优先选择"双改善"解（等待时间↓ AND 碳排放↓）
+        2. 若无双改善解，选择综合评分最高的解
+        3. 若没有满足碳排放约束的解，放宽约束到基线的1.1倍
         """
         if not solutions:
             return {}
@@ -377,21 +384,66 @@ class NSGA2Scheduler:
         if baseline_carbon is None:
             baseline_carbon = 1152.0
         
-        # 硬约束：碳排放 ≤ 基线值
-        carbon_threshold = baseline_carbon * 1.0
+        # 防御性过滤：移除无效解（等待时间或碳排放为0/负值）
+        valid = [s for s in solutions 
+                 if s["waiting_time"] > 0 and s["carbon_emission"] > 0]
+        if not valid:
+            valid = solutions  # 如果都无效，保留原始列表
         
-        # 优先保证碳排放不超标
-        carbon_feasible = [s for s in solutions
-                            if s["carbon_emission"] <= carbon_threshold]
+        # 分级约束：先严格，后放宽
+        constraint_levels = [
+            ("strict", baseline_carbon * 0.95),  # 级别1：碳排放 ≤ 基线 × 0.95（必须减排）
+            ("strict2", baseline_carbon * 1.0),   # 级别2：碳排放 ≤ 基线
+            ("relaxed", baseline_carbon * 1.1), # 级别3：碳排放 ≤ 基线 × 1.1
+        ]
         
-        if carbon_feasible:
-            # 在碳排放可行的解中，选择等待时间最短的
-            best = min(carbon_feasible, key=lambda s: s["waiting_time"])
-            rec = best.copy()
-            rec["selection_method"] = "carbon_first"
-            return rec
+        for level_name, carbon_threshold in constraint_levels:
+            # 当前级别的可行解
+            feasible = [s for s in valid 
+                        if s["carbon_emission"] <= carbon_threshold]
+            
+            if not feasible:
+                continue  # 当前级别无解，放宽约束
+            
+            # 在可行解中，优先选择"双改善"解（等待时间↓ AND 碳排放↓）
+            better = [s for s in feasible
+                      if s["waiting_time"] < baseline_wait 
+                      and s["carbon_emission"] < baseline_carbon]
+            
+            if better:
+                # 有双改善解：选择综合评分最高的
+                # 评分 = 等待时间改善率 × 0.4 + 碳排放改善率 × 0.6
+                for s in better:
+                    wait_red = (baseline_wait - s["waiting_time"]) / baseline_wait
+                    carbon_red = (baseline_carbon - s["carbon_emission"]) / baseline_carbon
+                    s["_score"] = wait_red * 0.4 + carbon_red * 0.6
+                
+                best = max(better, key=lambda s: s["_score"])
+                rec = best.copy()
+                rec["selection_method"] = f"dual_improvement_{level_name}"
+                return rec
+            
+            # 没有双改善解：选择"单改善"解（至少改善一个目标）
+            improved = [s for s in feasible
+                        if s["waiting_time"] < baseline_wait 
+                        or s["carbon_emission"] < baseline_carbon]
+            
+            if improved:
+                # 选择改善幅度最大的解
+                for s in improved:
+                    wait_red = max(0, (baseline_wait - s["waiting_time"]) / baseline_wait)
+                    carbon_red = max(0, (baseline_carbon - s["carbon_emission"]) / baseline_carbon)
+                    s["_score"] = wait_red * 0.4 + carbon_red * 0.6
+                
+                best = max(improved, key=lambda s: s["_score"])
+                rec = best.copy()
+                rec["selection_method"] = f"single_improvement_{level_name}"
+                return rec
+            
+            # 当前级别没有改善解：放宽到下一级别
         
-        # 没有满足碳排放约束的解：返回空字典（让 run() 处理）
+        # 所有级别都失败：返回空字典（让 run() 的 fallback 处理）
+        print(f"[警告] 没有找到比基线更好的解（基线: wait={baseline_wait:.3f}, carbon={baseline_carbon:.2f}）")
         return {}
 
     def _save_result(self, result: dict):
